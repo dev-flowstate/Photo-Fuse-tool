@@ -1,0 +1,11 @@
+Every PDF you clean lands in this folder, named after the original with
+"_cleaned" on the end - for example:
+
+    9702_s25_qp_21_cleaned.pdf
+
+Your original PDF is never changed.
+
+Open the cleaned file, screenshot a whole question, and drop that crop into
+Photo Fuse (the folder above this one) to make the topical image.
+
+You can delete this text file.

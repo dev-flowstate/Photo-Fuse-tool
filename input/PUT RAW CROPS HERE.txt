@@ -1,0 +1,7 @@
+Drop your raw screenshots / crops in this folder (optional - it's just a tidy
+place to keep them). The tool can open images from anywhere on your computer.
+
+Finished, correctly-named images go to the "output" folder instead. That is the
+folder you copy onto the USB.
+
+See INSTRUCTIONS.md for the full guide.

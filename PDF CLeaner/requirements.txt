@@ -1,0 +1,4 @@
+Pillow>=9.0
+numpy>=1.21
+pymupdf>=1.23
+openpyxl>=3.1
