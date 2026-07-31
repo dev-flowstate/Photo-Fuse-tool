@@ -36,8 +36,10 @@ try:
     from PIL import Image, ImageFilter
 except ImportError:  # pragma: no cover - startup guard for contributors
     sys.exit(
-        "Missing dependencies.\n"
-        "Run this once, then try again:\n\n"
+        "Missing dependencies.\n\n"
+        "Easiest fix: double-click \"1 - INSTALL (run me first).bat\".\n\n"
+        "Or run one of these in this folder:\n"
+        "    py -m pip install -r requirements.txt\n"
         "    python -m pip install -r requirements.txt\n"
     )
 

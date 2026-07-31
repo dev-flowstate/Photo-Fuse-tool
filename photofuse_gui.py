@@ -27,8 +27,10 @@ try:
     from PIL import ImageTk
 except ImportError:
     sys.exit(
-        "Missing dependencies.\n"
-        "Run this once, then try again:\n\n"
+        "Missing dependencies.\n\n"
+        "Easiest fix: double-click \"1 - INSTALL (run me first).bat\".\n\n"
+        "Or run one of these in this folder:\n"
+        "    py -m pip install -r requirements.txt\n"
         "    python -m pip install -r requirements.txt\n"
     )
 

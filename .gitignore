@@ -13,10 +13,16 @@ venv/
 # Remembered folder / spreadsheet choices (machine specific)
 photofuse-settings.json
 
-# Generated output, but keep the folder note
+# Points the .bat files at a particular python.exe - specific to one computer
+python-path.txt
+
+# Generated output, but keep the folder notes. Both folders are listed
+# explicitly: a pattern containing a slash is anchored to this file, so a bare
+# "output/*" would miss the one inside PDF CLeaner.
 output/*
 !output/FINISHED IMAGES APPEAR HERE.txt
-!output/CLEANED PDFS APPEAR HERE.txt
+PDF CLeaner/output/*
+!PDF CLeaner/output/CLEANED PDFS APPEAR HERE.txt
 
 # Raw crops people drop in, but keep the folder note
 input/*

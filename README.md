@@ -26,16 +26,19 @@ You need **Python 3.10 or newer**.
 Check it worked — open Command Prompt and run:
 
 ```bat
-python --version
-```
-
-If that says *'python' is not recognized*, try:
-
-```bat
 py --version
 ```
 
-If `py` works but `python` does not, just use `py` everywhere below.
+If that does not work, try:
+
+```bat
+python --version
+```
+
+**Either one is enough.** `py` is the Windows Python launcher; it installs into
+`C:\Windows` and works even when *Add python.exe to PATH* was never ticked. The `.bat`
+files try `py -3`, `python`, `py` and `python3` in turn, so a Python that only answers
+to one of them is still found.
 
 ---
 
@@ -213,15 +216,62 @@ Both tools also run headless from the command line — `py photofuse.py --help` 
 
 ---
 
-## 6. Something went wrong?
+## 6. When something is missing: `Check setup.bat`
+
+Double-click **`Check setup.bat`**. It prints which Python is actually being used,
+where it lives, and which libraries it can see:
+
+```
+The Python being used:
+   C:\Users\me\AppData\Local\Programs\Python\Python312\python.exe
+   version 3.12.4
+
+Libraries:
+   [ok]      Pillow     11.0.0     - images
+   [MISSING] pymupdf               - reading PDFs (PDF Cleaner only)
+```
+
+If something says `[MISSING]` it also prints the exact command to fix it, with the
+full path filled in. Screenshot that page when asking for help — it answers almost
+every setup question in one go.
+
+### "But I already installed it!"
+
+Almost always this: **the computer has more than one Python**, and the package went
+into a different one from the one the tools run. `Check setup.bat` shows you which
+Python is being used, so you can install into *that* one.
+
+Two ways to sort it out:
+
+**A — install into the Python the tools use** (simplest): double-click
+`1 - INSTALL (run me first).bat`. It installs into exactly the Python the launchers
+will use, so they cannot disagree.
+
+**B — point the tools at the Python you already set up.** Make a file called
+**`python-path.txt`** in this folder, with the full path to that `python.exe` on one
+line:
+
+```
+D:\Programs\Python311\python.exe
+```
+
+Every `.bat` file will then use precisely that Python — no PATH changes, nothing
+reinstalled. Lines starting with `#` are ignored, and if the path does not exist the
+launchers quietly fall back to finding Python themselves.
+
+---
+
+## 7. Something went wrong?
 
 | Problem | Fix |
 |---|---|
-| `'python' is not recognized` | You missed *Add python.exe to PATH*. Reinstall Python and tick it, or use `py` instead |
+| **"Python is NOT installed" but it definitely is** | Python was installed without *Add python.exe to PATH*. The `.bat` files also try the `py` launcher, so update to the current version of them. To fix PATH itself: Settings → Apps → Installed apps → Python → **Modify** → tick *Add Python to environment variables* |
+| `'python' is not recognized` | Same cause — use `py` instead of `python` everywhere |
 | `'pip' is not recognized` | Use `py -m pip ...` instead of `pip ...` |
-| `ModuleNotFoundError: No module named 'PIL'` | `py -m pip install Pillow` |
-| `ModuleNotFoundError: No module named 'fitz'` | `py -m pip install pymupdf` |
-| `ModuleNotFoundError: No module named 'openpyxl'` | `py -m pip install openpyxl` |
+| `python` opens the Microsoft Store | That is a Windows placeholder, not Python. Use `py`, or install from python.org |
+| `ModuleNotFoundError` for anything | Run **`Check setup.bat`** — it names the Python in use and prints the exact install command |
+| "I already installed that package!" | You have two Pythons. See section 6 — use `python-path.txt` or re-run the INSTALL file |
+| Python is on D: / a USB / Anaconda | Put its `python.exe` path in `python-path.txt` (section 6) |
 | `No module named 'tkinter'` (Mac/Linux) | Install your system's tkinter package |
 | A `.bat` flashes and closes | Run the INSTALL `.bat` first; the others pause on error |
 | "…is open in Excel" | Close the spreadsheet and press the button again |

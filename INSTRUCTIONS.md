@@ -68,8 +68,11 @@ On Linux you may also need tkinter: `sudo apt install python3-tk`.
 
 | What you see | What to do |
 |---|---|
-| `Python is NOT installed` | You missed the "Add python.exe to PATH" tick. Reinstall Python and tick it. |
-| `'python' is not recognized` | Same as above. |
+| `Python was not found` **but you know it is installed** | It was installed without the "Add python.exe to PATH" tick. Fix it without reinstalling: **Settings → Apps → Installed apps → Python → Modify → Modify → tick "Add Python to environment variables" → Install.** Then run the INSTALL file again. |
+| `Python was not found` and you have not installed it | Install from <https://www.python.org/downloads/> and **tick "Add python.exe to PATH"** on the first screen. |
+| Typing `python` opens the Microsoft Store | That is a Windows placeholder, not Python. Install from python.org instead. |
+| It says a library is missing **but you installed it** | You have more than one Python, and it went into the other one. Double-click **`Check setup.bat`** — it names the Python being used and prints the exact command to fix it. |
+| Your Python lives somewhere unusual (D: drive, Anaconda, a USB) | Make a file called `python-path.txt` in this folder holding the full path to that `python.exe` on one line, e.g. `D:\Programs\Python311\python.exe`. Every `.bat` will then use it. |
 | `pip` errors / timeouts | Check your internet, then run the INSTALL file again. |
 | `No module named tkinter` (Mac/Linux) | Install the tkinter package for your system. |
 

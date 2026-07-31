@@ -37,14 +37,16 @@ try:
     import numpy as np
     from PIL import Image
 except ImportError:
-    sys.exit("Missing dependencies. Run:  python -m pip install -r requirements.txt")
+    sys.exit("Missing dependencies. Run:  py -m pip install -r requirements.txt")
 
 try:
     import fitz  # PyMuPDF
 except ImportError:
     sys.exit(
-        "PyMuPDF is not installed - that is what reads the PDF.\n"
-        "Run this once, then try again:\n\n"
+        "PyMuPDF is not installed - that is what reads the PDF.\n\n"
+        "Easiest fix: double-click \"1 - INSTALL (run me first).bat\".\n\n"
+        "Or run one of these in this folder:\n"
+        "    py -m pip install -r requirements.txt\n"
         "    python -m pip install -r requirements.txt\n"
     )
 
