@@ -108,6 +108,7 @@ class Meta:
     # Spreadsheet-only extras (never appear in the file name):
     difficulty: str = ""
     marks: str = ""
+    correct_answer: str = ""   # A/B/C/D, for multiple-choice papers
     youtube_url: str = ""
 
     @property
@@ -128,8 +129,9 @@ class Meta:
             f"_{slugify(self.year)}{slugify(self.season)}_q{slugify(self.question)}"
         )
 
-    def filename(self) -> str:
-        return f"{self.stem}_{self.kind}.png"
+    def filename(self, kind: str | None = None) -> str:
+        """The image name. Pass a kind to ask for the other one of the pair."""
+        return f"{self.stem}_{kind or self.kind}.png"
 
     def problems(self) -> list[str]:
         """Human-readable list of what still needs filling in. Empty == good to go."""
@@ -640,7 +642,9 @@ def log_spreadsheet_row(out_dir: Path, meta: Meta, filename: str) -> Path:
         "marks": str(meta.marks).strip(),
         "youtube_url": str(meta.youtube_url).strip(),
     })
-    row["q_filename" if meta.kind == "Q" else "ms_filename"] = filename
+    # Both names come from the one entry - they differ only by _Q / _MS.
+    row["q_filename"] = meta.filename("Q")
+    row["ms_filename"] = meta.filename("MS")
     rows[meta.stem] = row
 
     with csv_path.open("w", newline="", encoding="utf-8") as fh:

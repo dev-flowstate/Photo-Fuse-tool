@@ -12,6 +12,7 @@ output folder already named correctly.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -46,6 +47,24 @@ IMAGE_TYPES = [
 ]
 EXCEL_TYPES = [("Excel workbook", "*.xlsx *.xlsm"), ("All files", "*.*")]
 
+#: Remembers the output folder and spreadsheet between sessions, so they only
+#: have to be picked once.
+SETTINGS_FILE = Path(__file__).resolve().parent / "photofuse-settings.json"
+
+
+def load_settings() -> dict:
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(values: dict) -> None:
+    try:
+        SETTINGS_FILE.write_text(json.dumps(values, indent=2), encoding="utf-8")
+    except OSError:
+        pass                    # remembering is a convenience, never a failure
+
 
 class App(ttk.Frame):
     def __init__(self, master: tk.Tk, preload: list[str] | None = None):
@@ -56,9 +75,11 @@ class App(ttk.Frame):
         self.columnconfigure(1, weight=1)
         self.rowconfigure(1, weight=1)
 
+        remembered = load_settings()
         self.paths: list[str] = []
-        self.out_dir = tk.StringVar(value=str(pf.DEFAULT_OUTPUT_DIR))
-        self.xlsx_path = tk.StringVar()
+        self.out_dir = tk.StringVar(value=remembered.get("out_dir")
+                                    or str(pf.DEFAULT_OUTPUT_DIR))
+        self.xlsx_path = tk.StringVar(value=remembered.get("xlsx_path", ""))
         self.last_saved: Path | None = None
         self._preview_ref = None  # keeps the PhotoImage alive
 
@@ -132,6 +153,7 @@ class App(ttk.Frame):
             "kind": tk.StringVar(value="Q"),
             "difficulty": tk.StringVar(value=""),
             "marks": tk.StringVar(value=""),
+            "correct_answer": tk.StringVar(value=""),
             "youtube_url": tk.StringVar(value=""),
         }
         for var in self.v.values():
@@ -168,6 +190,9 @@ class App(ttk.Frame):
                                           state="readonly", width=12))
         row(7, "Marks", ttk.Entry(box, textvariable=self.v["marks"], width=12), col=2)
         row(8, "YouTube URL", ttk.Entry(box, textvariable=self.v["youtube_url"]))
+        row(8, "Correct answer", ttk.Combobox(box, textvariable=self.v["correct_answer"],
+                                              values=["", "A", "B", "C", "D"],
+                                              state="readonly", width=12), col=2)
 
         ttk.Separator(box, orient="horizontal").grid(
             row=9, column=0, columnspan=4, sticky="ew", pady=8)
@@ -440,7 +465,7 @@ class App(ttk.Frame):
 
         try:
             book = ts.working_copy(template, self.out_dir.get())
-            result = ts.add_row(book, meta, meta.filename())
+            result = ts.add_row(book, meta)
         except ts.SheetError as exc:
             messagebox.showerror("Could not update the spreadsheet", str(exc))
             self.set_status(str(exc), error=True)
@@ -451,16 +476,18 @@ class App(ttk.Frame):
             self.set_status(str(exc), error=True)
             return
 
-        # The sheet must match the images on the USB, so say so if the picture
-        # for this row has not been saved yet.
-        warning = ""
-        if not (Path(self.out_dir.get()) / meta.filename()).exists():
-            warning = f"  Careful: {meta.filename()} is not in the output folder yet."
+        # The row names both pictures, so warn about whichever is not saved yet
+        # - the sheet and the images on the USB have to match.
+        folder = Path(self.out_dir.get())
+        missing = [name for name in (meta.filename("Q"), meta.filename("MS"))
+                   if not (folder / name).exists()]
+        warning = ("  Still to save: " + ", ".join(missing)) if missing else ""
 
+        self.remember()
         verb = "Updated" if result.updated else "Added"
         self.set_status(
-            f"{verb} row {result.row} of {result.path.name} ({result.sheet}) "
-            f"for {meta.filename()}.{warning}")
+            f"{verb} row {result.row} of {result.path.name} ({result.sheet}) - "
+            f"both {meta.filename('Q')} and {meta.filename('MS')} written.{warning}")
 
     def open_sheet(self):
         target = self.xlsx_path.get().strip()
@@ -475,13 +502,20 @@ class App(ttk.Frame):
                                             filetypes=EXCEL_TYPES)
         if chosen:
             self.xlsx_path.set(chosen)
+            self.remember()
             self.set_status(f"Spreadsheet set to {Path(chosen).name}.")
+
+    def remember(self):
+        """Keep the folder and spreadsheet for next time."""
+        save_settings({"out_dir": self.out_dir.get().strip(),
+                       "xlsx_path": self.xlsx_path.get().strip()})
 
     def choose_out_dir(self):
         chosen = filedialog.askdirectory(title="Where should finished images go?",
                                          initialdir=self.out_dir.get())
         if chosen:
             self.out_dir.set(chosen)
+            self.remember()
 
     def open_out_dir(self):
         target = Path(self.out_dir.get())

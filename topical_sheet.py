@@ -38,9 +38,11 @@ except ImportError:  # pragma: no cover - startup guard for contributors
         "    python -m pip install -r requirements.txt\n"
     ) from None
 
-#: Columns A-I of the Questions tab, in the brief's order.
-FIELDS = ("subject", "paper", "chapter", "year", "difficulty",
-          "marks", "q_filename", "ms_filename", "youtube_url")
+#: The columns we fill in on the Questions tab. `correct_answer` only exists
+#: on some templates (it is for multiple-choice papers) and is skipped when
+#: the sheet has no such column.
+FIELDS = ("subject", "paper", "chapter", "year", "difficulty", "marks",
+          "correct_answer", "q_filename", "ms_filename", "youtube_url")
 
 #: Spellings that have been seen for each heading, so a slightly different
 #: template still lines up.
@@ -51,6 +53,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "year": ("year", "examyear"),
     "difficulty": ("difficulty", "level"),
     "marks": ("marks", "totalmarks", "mark"),
+    "correct_answer": ("correctanswer", "answer", "correct", "mcqanswer"),
     "q_filename": ("qfilename", "questionfilename", "qfile", "questionfile"),
     "ms_filename": ("msfilename", "markschemefilename", "msfile", "markschemefile"),
     "youtube_url": ("youtubeurl", "youtube", "video", "videourl", "solutionvideo"),
@@ -129,11 +132,14 @@ def last_data_row(sheet, header_row: int, mapping: dict[str, int]) -> int:
     hundreds of rows further down, and counting those would leave a huge gap
     of empty rows before the new one.
     """
-    columns = list(mapping.values())
+    columns = sorted(mapping.values())
     last = header_row
-    for row in range(header_row + 1, sheet.max_row + 1):
-        if any(sheet.cell(row=row, column=c).value not in (None, "") for c in columns):
-            last = row
+    # iter_rows in bulk: the real template carries formulas down to row 6000,
+    # so this is thousands of cells and reading them one at a time is slow.
+    for offset, values in enumerate(sheet.iter_rows(
+            min_row=header_row + 1, max_col=columns[-1], values_only=True)):
+        if any(values[c - 1] not in (None, "") for c in columns):
+            last = header_row + 1 + offset
     return last
 
 
@@ -206,13 +212,18 @@ def _extend_tables(sheet, last_row: int) -> None:
             continue                                    # not worth failing over
 
 
-def values_for(meta, filename: str) -> dict[str, object]:
+def values_for(meta, filename: str = "") -> dict[str, object]:
     """
     Turn the form's contents into cell values, following the brief.
 
     The paper column holds the paper number only - the variant belongs in the
     file name - and the chapter is written in its slug form so it is spelled
     identically on every row.
+
+    Both file name columns are filled from the one entry. The two names differ
+    only by their _Q / _MS ending, so there is nothing to gain from typing the
+    mark scheme in separately - and plenty to lose, since that is exactly
+    where a typo would break the link between sheet and image.
     """
     from photofuse import slugify
 
@@ -220,7 +231,10 @@ def values_for(meta, filename: str) -> dict[str, object]:
         "subject": slugify(meta.subject),
         "chapter": slugify(meta.chapter),
         "difficulty": str(meta.difficulty).strip(),
+        "correct_answer": str(meta.correct_answer).strip().upper(),
         "youtube_url": str(meta.youtube_url).strip(),
+        "q_filename": meta.filename("Q"),
+        "ms_filename": meta.filename("MS"),
     }
 
     paper = str(meta.paper).strip()
@@ -230,16 +244,15 @@ def values_for(meta, filename: str) -> dict[str, object]:
     marks = str(meta.marks).strip()
     values["marks"] = int(marks) if marks.isdigit() else marks
 
-    values["q_filename" if meta.kind == "Q" else "ms_filename"] = filename
     return values
 
 
-def add_row(workbook_path: str | Path, meta, filename: str) -> AddResult:
+def add_row(workbook_path: str | Path, meta) -> AddResult:
     """
     Put this question into the sheet, updating its row if it already has one.
 
-    `filename` is the image name just saved; whether it lands in q_filename or
-    ms_filename follows `meta.kind`.
+    Both the question and the mark scheme file names are written from the one
+    entry, so you only ever fill the form in once per question.
     """
     path = Path(workbook_path)
     if not path.is_file():
@@ -263,15 +276,13 @@ def add_row(workbook_path: str | Path, meta, filename: str) -> AddResult:
     if existing is None:
         _copy_row_style(sheet, row - 1, row)
 
-    for field, value in values_for(meta, filename).items():
+    for field, value in values_for(meta).items():
         column = mapping.get(field)
-        if column is None:
-            continue
-        # Never blank a cell that already holds something just because this
-        # form field was left empty.
-        if value in (None, "") and sheet.cell(row=row, column=column).value not in (None, ""):
-            continue
-        if value in (None, "") and existing is not None:
+        # An empty box is never written, so a field left blank can neither
+        # wipe what is already in the cell nor add clutter to a fresh row.
+        # Fields the sheet does not have (correct_answer, on some templates)
+        # are simply skipped.
+        if column is None or value in (None, ""):
             continue
         sheet.cell(row=row, column=column).value = value
 

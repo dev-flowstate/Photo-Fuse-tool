@@ -148,18 +148,27 @@ So the example above saves as `physics_p11_dynamics_2025mj_q19_Q.png`. Names are
 always **lowercase** with a lowercase `.png`, and no spaces, commas or `/` — the tool
 guarantees that, which is the thing the brief says goes wrong most often.
 
-The boxes under *For the spreadsheet* (Difficulty, Marks, YouTube URL) never appear in
-the file name — they only fill columns E, F and I. **Marks:** Paper 1 MCQs are `1`;
-structured papers take the real mark total.
+The boxes under *For the spreadsheet* never appear in the file name:
 
-### Step 3 — Preview, Save, then add the row
+| Box | Notes |
+|---|---|
+| Difficulty | Easy / Medium / Hard |
+| Marks | Paper 1 MCQs are `1`; structured papers take the real mark total |
+| Correct answer | A / B / C / D — multiple-choice papers only, leave blank otherwise |
+| YouTube URL | optional |
+
+### Step 3 — Save both pictures, add one row
 
 1. **Preview** (`Ctrl+P`) — see the result without saving.
-2. **Fuse & Save Photo** (`Ctrl+S`) — writes the PNG to the output folder.
-3. **Add to Excel sheet** (`Ctrl+E`) — writes the row (Part 5).
+2. With **Type = Q**, press **Fuse & Save Photo** (`Ctrl+S`).
+3. Switch **Type** to `MS`, add the mark-scheme picture, press **Fuse & Save Photo**
+   again.
+4. Press **Add to Excel sheet** (`Ctrl+E`) — **once per question**.
 
-Then switch **Type** to `MS`, add the mark-scheme picture, and repeat. Adding the MS
-fills the *same row* — one question is always one row.
+**You never enter the mark scheme in the spreadsheet.** One press fills *both*
+`q_filename` and `ms_filename`, because the two names differ only by `_Q` / `_MS`. It
+does not matter whether Type says Q or MS when you press it — the row is the same
+either way.
 
 The boxes are left exactly as you set them after saving, because both buttons read
 them. Change only what differs for the next question.
@@ -220,21 +229,27 @@ again (rows keep going into the same output copy) or pick the copy directly.
 
 ### What it writes
 
-Only columns **A–I**: subject, paper, chapter, year, difficulty, marks, q_filename,
-ms_filename, youtube_url.
+The columns are found **by their heading**, not by position, so it lines up with your
+template even though that template has `correct_answer` sitting in the middle (which
+pushes the file-name columns along by one compared with the printed brief).
 
-- **Columns J and K are never written.** The brief says they fill themselves, so
-  instead the tool copies their formulas down from the row above — exactly what Excel
-  does when you drag a row down. They keep working on every new row.
+It fills: subject, paper, chapter, year, difficulty, marks, correct_answer,
+q_filename, ms_filename, youtube_url.
+
+- **One press fills both file names.** `q_filename` gets `..._Q.png` and `ms_filename`
+  gets `..._MS.png` from the same entry — you never type the mark scheme in.
+- **The image-URL columns are never written.** Those fill themselves, so the tool
+  leaves them alone; where a new row needs them, it copies the formulas down from the
+  row above, exactly as dragging a row does.
 - **`paper` holds the number only** (1–6). The variant lives in the file name, never
   in this column.
 - **`chapter` is written in its short form** (`coord-geom`, `dynamics`) so it is
   spelled identically on every row — the brief asks for the same spelling every time.
-- Saving the **Q** fills `q_filename`; saving the **MS** fills `ms_filename` **on the
-  same row**. One question = one row, always.
+- Adding the same question twice **updates its row** instead of making a second one.
+- An empty box is never written, so it can neither wipe a cell nor clutter a new row.
 
 Your dropdowns, colours, column widths, frozen headings and other tabs all survive
-untouched.
+untouched. On a 6000-row template each add takes about a second.
 
 ### Two things it will tell you
 

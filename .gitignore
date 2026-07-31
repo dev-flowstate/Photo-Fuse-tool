@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Spreadsheets - the auto-fill columns hold the image-hosting URL, so the
+# workbook stays out of the repository.
+*.xlsx
+*.xlsm
+
+# Remembered folder / spreadsheet choices (machine specific)
+photofuse-settings.json
+
+# Generated output, but keep the folder note
+output/*
+!output/FINISHED IMAGES APPEAR HERE.txt
+!output/CLEANED PDFS APPEAR HERE.txt
+
+# Raw crops people drop in, but keep the folder note
+input/*
+!input/PUT RAW CROPS HERE.txt
+
+# Windows
+desktop.ini
+Thumbs.db
