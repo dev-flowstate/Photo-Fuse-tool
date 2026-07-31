@@ -19,14 +19,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-#: (import name, pip name, what it is for)
+#: (import names to try, pip name, what it is for). PyMuPDF answers to two
+#: names - "pymupdf" is the modern one, "fitz" the older alias - and some
+#: installs only carry one of them, so both are tried.
 PHOTO_FUSE_NEEDS = [
-    ("PIL", "Pillow", "images"),
-    ("numpy", "numpy", "pixel maths"),
-    ("openpyxl", "openpyxl", "writing the spreadsheet"),
+    (("PIL",), "Pillow", "images"),
+    (("numpy",), "numpy", "pixel maths"),
+    (("openpyxl",), "openpyxl", "writing the spreadsheet"),
 ]
 PDF_CLEANER_NEEDS = [
-    ("fitz", "pymupdf", "reading PDFs"),
+    (("pymupdf", "fitz"), "pymupdf", "reading PDFs"),
 ]
 
 HERE = Path(__file__).resolve().parent
@@ -34,19 +36,58 @@ LINE = "=" * 62
 RULE = "-" * 62
 
 
-def check(group) -> list[str]:
-    """Print each library's state; return the pip names that are missing."""
-    missing = []
-    for module, package, why in group:
-        try:
-            loaded = __import__(module)
-        except ImportError:
-            print(f"   [MISSING] {package:<10} {'':<10} - {why}")
-            missing.append(package)
-        else:
+def check(group) -> tuple[list[str], list[str]]:
+    """
+    Print each library's state.
+
+    Returns (pip names that are missing, notes about broken ones). The real
+    import error is kept, not swallowed: "installed but will not load" looks
+    identical to "not installed" unless you print the reason.
+    """
+    missing, notes = [], []
+    for names, package, why in group:
+        loaded, error = None, None
+        for name in names:
+            try:
+                loaded = __import__(name)
+                break
+            except ImportError as exc:
+                error = error or exc
+            except Exception as exc:                  # noqa: BLE001 - reported
+                error = error or exc
+
+        if loaded is not None:
             version = getattr(loaded, "__version__", "")
             print(f"   [ok]      {package:<10} {version:<10} - {why}")
-    return missing
+            continue
+
+        print(f"   [MISSING] {package:<10} {'':<10} - {why}")
+        missing.append(package)
+        if error is not None:
+            print(f"             reason: {type(error).__name__}: {error}")
+            notes.append(f"{package}: {error}")
+    return missing, notes
+
+
+def explain(notes: list[str]) -> None:
+    """Turn the raw import errors into something actionable."""
+    joined = " ".join(notes).lower()
+
+    if "dll load failed" in joined or "specified module could not be found" in joined:
+        print(RULE)
+        print("  This library IS installed - Windows just cannot load it")
+        print(RULE)
+        print()
+        print("  That error means a missing Microsoft Visual C++ runtime, which")
+        print("  compiled libraries need. Install it once and the problem goes:")
+        print()
+        print("     https://aka.ms/vs/17/release/vc_redist.x64.exe")
+        print()
+        print("  Download, run it, restart the computer, then try again.")
+        print()
+    elif "no module named" in joined:
+        print("  (The package genuinely is not in this Python.)")
+        print()
 
 
 def install(packages: list[str]) -> bool:
@@ -97,11 +138,12 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     print("Photo Fuse needs:")
-    missing_core = check(PHOTO_FUSE_NEEDS)
+    missing_core, notes_core = check(PHOTO_FUSE_NEEDS)
     print()
     print("PDF Cleaner also needs:")
-    missing_pdf = check(PDF_CLEANER_NEEDS)
+    missing_pdf, notes_pdf = check(PDF_CLEANER_NEEDS)
     print()
+    notes = notes_core + notes_pdf
 
     try:
         import tkinter                                    # noqa: F401
@@ -137,6 +179,16 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"  Missing from THIS Python: {', '.join(missing)}")
     print()
+    explain(notes)
+
+    # Reinstalling cannot help something that is present but will not load.
+    if any("dll load failed" in n.lower()
+           or "specified module could not be found" in n.lower() for n in notes):
+        print("  Installing it again will NOT help - it is already there.")
+        print("  Fix the runtime above first.")
+        print()
+        return 1
+
     print("  If you are sure you installed these already, they went into a")
     print("  different Python on this computer. What matters is getting them")
     print("  into the one named at the top of this page.")

@@ -39,16 +39,24 @@ try:
 except ImportError:
     sys.exit("Missing dependencies. Run:  py -m pip install -r requirements.txt")
 
+# PyMuPDF answers to two names: "pymupdf" since 1.24, "fitz" before that and
+# still shipped as an alias. Some installs only carry one, so try both.
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz
 except ImportError:
-    sys.exit(
-        "PyMuPDF is not installed - that is what reads the PDF.\n\n"
-        "Easiest fix: double-click \"1 - INSTALL (run me first).bat\".\n\n"
-        "Or run one of these in this folder:\n"
-        "    py -m pip install -r requirements.txt\n"
-        "    python -m pip install -r requirements.txt\n"
-    )
+    try:
+        import fitz
+    except ImportError as exc:
+        sys.exit(
+            f"PyMuPDF will not load - that is what reads the PDF.\n\n"
+            f"The exact error was:\n    {type(exc).__name__}: {exc}\n\n"
+            "If that mentions 'DLL load failed', PyMuPDF IS installed but\n"
+            "Windows cannot load it - install the Visual C++ runtime from\n"
+            "    https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
+            "then restart the computer.\n\n"
+            "Otherwise run \"Check setup.bat\" in the folder above; it says\n"
+            "exactly which Python is in use and what it is short of.\n"
+        )
 
 try:
     import photofuse as pf
