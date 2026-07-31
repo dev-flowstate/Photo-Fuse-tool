@@ -29,17 +29,29 @@ Use either on its own, or both — they read the same boxes.
 
 ## Part 1 — Setup (do this once)
 
-### Step 1: Install Python
+Double-click:
 
-If you already have Python 3.10 or newer, skip to Step 2.
+```
+setup.bat
+```
+
+That is all. It finds Python, **installs Python for you if the computer does not
+have it** (downloaded from python.org, for your account only, no admin password),
+then installs everything both tools need and checks it worked.
+
+Leave it running — the first time takes a few minutes.
+
+<details>
+<summary>What if I want to install Python myself first?</summary>
 
 1. Go to <https://www.python.org/downloads/>
 2. Download the latest Python for Windows.
 3. Run the installer. **On the very first screen, tick "Add python.exe to PATH".**
-   This is the step everybody misses — if you skip it nothing else will work.
-4. Click *Install Now* and let it finish.
+4. Click *Install Now*, then run `setup.bat`.
+</details>
 
-### Step 2: Install the libraries
+<details>
+<summary>The old way (still works)</summary>
 
 Double-click:
 
@@ -47,29 +59,30 @@ Double-click:
 1 - INSTALL (run me first).bat
 ```
 
-A black window opens and installs **Pillow** (image handling), **numpy** (fast maths)
-and **openpyxl** (writes the spreadsheet).
-It takes about 30 seconds. When it says *Done*, close it.
+It simply runs `setup.bat`, so the result is identical.
+</details>
 
 <details>
-<summary>Prefer to do it by hand, or on Mac/Linux?</summary>
+<summary>By hand, or on Mac/Linux</summary>
 
 Open a terminal in this folder and run:
 
 ```bash
-python -m pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
+python3 photofuse_gui.py
 ```
 
-Then start the tool with `python photofuse_gui.py`.
 On Linux you may also need tkinter: `sudo apt install python3-tk`.
+`setup.bat` is Windows-only.
 </details>
 
-### If the install fails
+### If the setup fails
 
 | What you see | What to do |
 |---|---|
-| `Python was not found` **but you know it is installed** | It was installed without the "Add python.exe to PATH" tick. Fix it without reinstalling: **Settings → Apps → Installed apps → Python → Modify → Modify → tick "Add Python to environment variables" → Install.** Then run the INSTALL file again. |
-| `Python was not found` and you have not installed it | Install from <https://www.python.org/downloads/> and **tick "Add python.exe to PATH"** on the first screen. |
+| `Could not download Python` | No internet, or a school/office firewall. Install Python by hand from <https://www.python.org/downloads/> (**tick "Add python.exe to PATH"**), then run `setup.bat` again. |
+| `Python was installed but this window cannot see it yet` | Close the window and run `setup.bat` again — that is normally all it needs. |
+| `Python was not found` **but you know it is installed** | It was installed without the "Add python.exe to PATH" tick. Fix it without reinstalling: **Settings → Apps → Installed apps → Python → Modify → Modify → tick "Add Python to environment variables" → Install.** Then run `setup.bat` again. |
 | Typing `python` opens the Microsoft Store | That is a Windows placeholder, not Python. Install from python.org instead. |
 | It says a library is missing **but you installed it** | You have more than one Python, and it went into the other one. Double-click **`Check setup.bat`** — it names the Python being used and prints the exact command to fix it. |
 | Your Python lives somewhere unusual (D: drive, Anaconda, a USB) | Make a file called `python-path.txt` in this folder holding the full path to that `python.exe` on one line, e.g. `D:\Programs\Python311\python.exe`. Every `.bat` will then use it. |

@@ -13,15 +13,36 @@ individually, every diagram and graph intact.
 
 ---
 
-## 1. Install Python
+## 1. Setup — just run one file
 
-You need **Python 3.10 or newer**.
+Download the project, then double-click:
+
+```
+setup.bat
+```
+
+That is the whole thing. It:
+
+1. finds Python, wherever it lives on the machine;
+2. **if Python is missing, downloads it from python.org and installs it** — for
+   your account only, so no administrator password is needed;
+3. installs Pillow, numpy, openpyxl and PyMuPDF into that exact Python;
+4. checks it all worked and tells you if anything is still wrong.
+
+Leave it running; the first time takes a few minutes. When it finishes, start the
+tools with `2 - START Photo Fuse.bat`.
+
+> It downloads the official signed installer straight from `python.org` — nothing
+> else, and nothing from anywhere else.
+
+`1 - INSTALL (run me first).bat` still works too; it just runs `setup.bat`.
+
+### Prefer to install Python yourself?
 
 1. Download it from <https://www.python.org/downloads/>
 2. Run the installer.
 3. **On the very first screen, tick "Add python.exe to PATH".**
-   This is the step people miss, and nothing works without it.
-4. Click *Install Now*.
+4. Click *Install Now*, then run `setup.bat`.
 
 Check it worked — open Command Prompt and run:
 
@@ -42,12 +63,9 @@ to one of them is still found.
 
 ---
 
-## 2. Install the libraries
+## 2. Installing the libraries by hand
 
-### The easy way (Windows)
-
-Double-click **`1 - INSTALL (run me first).bat`**, then the one inside the
-**`PDF CLeaner`** folder. Done.
+Only needed if `setup.bat` could not finish — it does all of this for you.
 
 ### By hand
 
@@ -122,6 +140,7 @@ On Linux you may also need tkinter: `sudo apt install python3-tk`
 
 | Tool | Double-click | Or from the command line |
 |---|---|---|
+| Setup (once) | `setup.bat` | `py -m pip install -r requirements.txt` |
 | Photo Fuse | `2 - START Photo Fuse.bat` | `py photofuse_gui.py` |
 | Photo Fuse (with files) | drag images onto `Drag images here.bat` | `py photofuse_gui.py a.png b.png` |
 | PDF Cleaner | `PDF CLeaner\2 - START PDF Cleaner.bat` | `py "PDF CLeaner\pdfcleaner_gui.py"` |

@@ -80,7 +80,11 @@ def install(packages: list[str]) -> bool:
     return False
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    # --fix installs whatever is missing without asking, so setup.bat can run
+    # the whole thing start to finish unattended.
+    auto = "--fix" in (argv if argv is not None else sys.argv[1:])
+
     print(LINE)
     print("  Photo Fuse / PDF Cleaner - setup check")
     print(LINE)
@@ -138,10 +142,14 @@ def main() -> int:
     print("  into the one named at the top of this page.")
     print()
 
-    try:
-        answer = input("  Install them now into that Python? [Y/n] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
+    if auto:
+        answer = "y"
+        print("  Installing them now...")
+    else:
+        try:
+            answer = input("  Install them now into that Python? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
 
     if answer in ("", "y", "yes"):
         if install(missing):
