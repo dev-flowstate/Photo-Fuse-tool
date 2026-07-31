@@ -24,12 +24,23 @@ pause
 exit /b 1
 
 :found
-%PY% pdfcleaner_gui.py %*
-if errorlevel 1 (
-  echo.
-  echo PDF Cleaner could not start.
-  echo Run "Check setup.bat" in the folder above to see which Python is being
-  echo used and what is missing from it.
-  echo.
-  pause
-)
+%PY% pdfcleaner_gui.py %* 2>"%~dp0error-log.txt"
+if not errorlevel 1 goto ok
+
+echo.
+echo ==============================================================
+echo   PDF Cleaner could not start. The actual error:
+echo ==============================================================
+echo.
+type "%~dp0error-log.txt"
+echo.
+echo --------------------------------------------------------------
+echo Saved as error-log.txt next to this file - send that over if
+echo you are stuck. "Check setup.bat" in the folder above fixes
+echo most causes by itself.
+echo.
+pause
+exit /b 1
+
+:ok
+del "%~dp0error-log.txt" >nul 2>&1

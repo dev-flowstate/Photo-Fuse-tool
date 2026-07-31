@@ -25,12 +25,22 @@ pause
 exit /b 1
 
 :found
-%PY% photofuse_gui.py %*
-if errorlevel 1 (
-  echo.
-  echo Photo Fuse could not start.
-  echo Run "Check setup.bat" to see which Python is being used and what is
-  echo missing from it.
-  echo.
-  pause
-)
+%PY% photofuse_gui.py %* 2>"%~dp0error-log.txt"
+if not errorlevel 1 goto ok
+
+echo.
+echo ==============================================================
+echo   Photo Fuse could not start. The actual error:
+echo ==============================================================
+echo.
+type "%~dp0error-log.txt"
+echo.
+echo --------------------------------------------------------------
+echo Saved as error-log.txt next to this file - send that over if
+echo you are stuck. "Check setup.bat" fixes most causes by itself.
+echo.
+pause
+exit /b 1
+
+:ok
+del "%~dp0error-log.txt" >nul 2>&1
