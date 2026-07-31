@@ -1,4 +1,4 @@
-Every PDF you clean lands in this folder, named after the original with
+﻿Every PDF you clean lands in this folder, named after the original with
 "_cleaned" on the end - for example:
 
     9702_s25_qp_21_cleaned.pdf

@@ -1,6 +1,6 @@
 # Photo Fuse + PDF Cleaner
 
-Two small Windows tools for building **Aidify topical questions** out of past papers.
+Two small Windows tools for building **Easify topical questions** out of past papers.
 
 | Tool | What it does |
 |---|---|
@@ -160,17 +160,26 @@ this, and it is the thing that most often goes wrong by hand.
 
 ### The spreadsheet
 
-Pick your `aidify-topical-template.xlsx` in Photo Fuse and press **Add to Excel
+Pick your `easify-topical-template.xlsx` in Photo Fuse and press **Add to Excel
 sheet**. It:
 
 - **never writes to your original** — it copies the file into `output/` the first time
-  and adds rows to that copy, which is the one you hand over;
+  and adds rows to that copy, which is the one you work from;
 - finds columns **by their heading**, so it still works if the layout shifts;
 - fills **both** `q_filename` and `ms_filename` from the one entry (they differ only by
   `_Q` / `_MS`, so there is nothing to type twice and nothing to typo);
-- never touches the self-filling image-URL columns, and copies their formulas down for
-  new rows;
+- never touches columns **J and K** — those fill themselves — and copies their formulas
+  down for new rows;
 - puts the same question on the same row if you add it again.
+
+When everything is in, open that copy in Excel and **Save As → CSV**. The CSV plus the
+PNG folder is what gets handed over. (That step needs Excel: J and K are formulas, and
+only Excel can work out what they come to.)
+
+> **On the brief's "don't use AI to fuse images":** that is about generative tools,
+> which redraw the image and can silently change a number. Photo Fuse crops, pads and
+> stacks the real pixels — like stitching in Paint, but without the slips. Nothing is
+> ever redrawn.
 
 Full details for contributors: **[INSTRUCTIONS.md](INSTRUCTIONS.md)** and
 **[PDF CLeaner/INSTRUCTIONS.md](PDF%20CLeaner/INSTRUCTIONS.md)**.

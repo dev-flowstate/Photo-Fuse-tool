@@ -153,7 +153,6 @@ class App(ttk.Frame):
             "kind": tk.StringVar(value="Q"),
             "difficulty": tk.StringVar(value=""),
             "marks": tk.StringVar(value=""),
-            "correct_answer": tk.StringVar(value=""),
             "youtube_url": tk.StringVar(value=""),
         }
         for var in self.v.values():
@@ -190,9 +189,6 @@ class App(ttk.Frame):
                                           state="readonly", width=12))
         row(7, "Marks", ttk.Entry(box, textvariable=self.v["marks"], width=12), col=2)
         row(8, "YouTube URL", ttk.Entry(box, textvariable=self.v["youtube_url"]))
-        row(8, "Correct answer", ttk.Combobox(box, textvariable=self.v["correct_answer"],
-                                              values=["", "A", "B", "C", "D"],
-                                              state="readonly", width=12), col=2)
 
         ttk.Separator(box, orient="horizontal").grid(
             row=9, column=0, columnspan=4, sticky="ew", pady=8)
@@ -274,7 +270,7 @@ class App(ttk.Frame):
                                                                         padx=(6, 0), pady=(6, 0))
 
         ttk.Label(box,
-                  text="Pick your aidify-topical-template.xlsx. A copy is made in the output "
+                  text="Pick your easify-topical-template.xlsx. A copy is made in the output "
                        "folder and rows are added to that - your original is never changed.",
                   foreground="#666", font=("Segoe UI", 8)
                   ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(3, 0))
@@ -460,7 +456,7 @@ class App(ttk.Frame):
             messagebox.showwarning(
                 "No spreadsheet chosen",
                 "Press Choose... next to 'Excel sheet' and pick your "
-                "aidify-topical-template.xlsx first.")
+                "easify-topical-template.xlsx first.")
             return
 
         try:
@@ -498,7 +494,7 @@ class App(ttk.Frame):
         self._open(copy if copy.exists() else Path(target))
 
     def choose_xlsx(self):
-        chosen = filedialog.askopenfilename(title="Choose your aidify-topical-template.xlsx",
+        chosen = filedialog.askopenfilename(title="Choose your easify-topical-template.xlsx",
                                             filetypes=EXCEL_TYPES)
         if chosen:
             self.xlsx_path.set(chosen)
@@ -536,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     scale = pf.enable_hidpi()
     root = tk.Tk()
-    root.title("Photo Fuse - Aidify topical questions")
+    root.title("Photo Fuse - Easify topical questions")
     if scale > 1.01:
         root.tk.call("tk", "scaling", 96.0 * scale / 72.0)
     try:

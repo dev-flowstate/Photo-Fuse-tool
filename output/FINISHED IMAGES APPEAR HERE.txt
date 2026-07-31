@@ -1,11 +1,11 @@
-Every image you save from Photo Fuse lands in this folder, already named
+﻿Every image you save from Photo Fuse lands in this folder, already named
 correctly - for example:
 
     math_p12_quadratics_2022on_q4_Q.png
     math_p12_quadratics_2022on_q4_MS.png
 
 Do NOT rename anything. Copy this whole folder onto the USB, together with the
-filled-in aidify-topical-template.xlsx.
+filled-in easify-topical-template.xlsx.
 
 _spreadsheet_rows.csv (if you left that option ticked) holds columns A-I for the
 Questions tab - open it in Excel and paste the rows across.

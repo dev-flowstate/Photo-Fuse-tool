@@ -1,8 +1,8 @@
 """
-Aidify topical spreadsheet - row appending
+Easify topical spreadsheet - row appending
 ==========================================
 
-Adds one row per question to `aidify-topical-template.xlsx` without disturbing
+Adds one row per question to `easify-topical-template.xlsx` without disturbing
 anything already in it.
 
 How it stays safe:
@@ -38,11 +38,9 @@ except ImportError:  # pragma: no cover - startup guard for contributors
         "    python -m pip install -r requirements.txt\n"
     ) from None
 
-#: The columns we fill in on the Questions tab. `correct_answer` only exists
-#: on some templates (it is for multiple-choice papers) and is skipped when
-#: the sheet has no such column.
+#: Columns A-I of the Questions tab - the ones a contributor fills in.
 FIELDS = ("subject", "paper", "chapter", "year", "difficulty", "marks",
-          "correct_answer", "q_filename", "ms_filename", "youtube_url")
+          "q_filename", "ms_filename", "youtube_url")
 
 #: Spellings that have been seen for each heading, so a slightly different
 #: template still lines up.
@@ -53,7 +51,6 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "year": ("year", "examyear"),
     "difficulty": ("difficulty", "level"),
     "marks": ("marks", "totalmarks", "mark"),
-    "correct_answer": ("correctanswer", "answer", "correct", "mcqanswer"),
     "q_filename": ("qfilename", "questionfilename", "qfile", "questionfile"),
     "ms_filename": ("msfilename", "markschemefilename", "msfile", "markschemefile"),
     "youtube_url": ("youtubeurl", "youtube", "video", "videourl", "solutionvideo"),
@@ -119,7 +116,7 @@ def find_header(sheet) -> tuple[int, dict[str, int]]:
             "Could not find the column headings in that spreadsheet.\n\n"
             "The tool looks for a row containing 'subject' and 'q_filename'.\n"
             "Open the file and check you picked the right one - it should be "
-            "aidify-topical-template.xlsx with a Questions tab."
+            "easify-topical-template.xlsx with a Questions tab."
         )
     return row, mapping
 
@@ -231,7 +228,6 @@ def values_for(meta, filename: str = "") -> dict[str, object]:
         "subject": slugify(meta.subject),
         "chapter": slugify(meta.chapter),
         "difficulty": str(meta.difficulty).strip(),
-        "correct_answer": str(meta.correct_answer).strip().upper(),
         "youtube_url": str(meta.youtube_url).strip(),
         "q_filename": meta.filename("Q"),
         "ms_filename": meta.filename("MS"),
@@ -280,8 +276,7 @@ def add_row(workbook_path: str | Path, meta) -> AddResult:
         column = mapping.get(field)
         # An empty box is never written, so a field left blank can neither
         # wipe what is already in the cell nor add clutter to a fresh row.
-        # Fields the sheet does not have (correct_answer, on some templates)
-        # are simply skipped.
+        # Anything the sheet has no column for is simply skipped.
         if column is None or value in (None, ""):
             continue
         sheet.cell(row=row, column=column).value = value

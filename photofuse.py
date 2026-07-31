@@ -3,7 +3,7 @@ Photo Fuse - core engine
 ========================
 
 Fuses several crops of the SAME past-paper question into one clean, tightly
-cropped PNG, named exactly the way the Aidify contributor brief requires.
+cropped PNG, named exactly the way the Easify contributor brief requires.
 
 What it does to each part, in order:
   1. strip border lines   - removes page rules / scan edges sitting at the border
@@ -108,7 +108,6 @@ class Meta:
     # Spreadsheet-only extras (never appear in the file name):
     difficulty: str = ""
     marks: str = ""
-    correct_answer: str = ""   # A/B/C/D, for multiple-choice papers
     youtube_url: str = ""
 
     @property
@@ -593,7 +592,7 @@ def build(paths: Sequence[str | Path], s: Settings) -> Image.Image:
 # --------------------------------------------------------------------------
 
 def save(img: Image.Image, meta: Meta, out_dir: Path, overwrite: bool = True) -> Path:
-    """Write the PNG under its correct Aidify name. Returns the full path."""
+    """Write the PNG under its correct Easify name. Returns the full path."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / meta.filename()

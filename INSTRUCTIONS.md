@@ -1,7 +1,7 @@
 # Photo Fuse — how to use it
 
 Takes the **pieces of one past-paper question** (or a single picture) and turns them
-into **one clean PNG, already named the way the Aidify brief wants** — then adds the
+into **one clean PNG, already named the way the Easify brief wants** — then adds the
 row to your spreadsheet for you.
 
 It also:
@@ -21,7 +21,7 @@ as a renamer — see *Rename only* in Part 4.
 | Button | What it does |
 |---|---|
 | **Fuse & Save Photo** (`Ctrl+S`) | builds the PNG and saves it under the correct name |
-| **Add to Excel sheet** (`Ctrl+E`) | writes one row into your `aidify-topical-template.xlsx` |
+| **Add to Excel sheet** (`Ctrl+E`) | writes one row into your `easify-topical-template.xlsx` |
 
 Use either on its own, or both — they read the same boxes.
 
@@ -154,7 +154,6 @@ The boxes under *For the spreadsheet* never appear in the file name:
 |---|---|
 | Difficulty | Easy / Medium / Hard |
 | Marks | Paper 1 MCQs are `1`; structured papers take the real mark total |
-| Correct answer | A / B / C / D — multiple-choice papers only, leave blank otherwise |
 | YouTube URL | optional |
 
 ### Step 3 — Save both pictures, add one row
@@ -209,7 +208,7 @@ brief's 1000–1200 px range. (200 dpi gives 1424 px, which is over.)
 
 ## Part 5 — Filling the spreadsheet
 
-Press **Choose…** next to *Excel sheet* and pick your `aidify-topical-template.xlsx`.
+Press **Choose…** next to *Excel sheet* and pick your `easify-topical-template.xlsx`.
 Then **Add to Excel sheet** (`Ctrl+E`) writes one row per question.
 
 ### Your original is never touched
@@ -219,7 +218,7 @@ row after that goes into the copy:
 
 ```
 output/
-├── aidify-topical-template.xlsx   ← the filled copy - this goes on the USB
+├── easify-topical-template.xlsx   ← the filled copy - this goes on the USB
 └── physics_p11_dynamics_2025mj_q19_Q.png ...
 ```
 
@@ -229,18 +228,17 @@ again (rows keep going into the same output copy) or pick the copy directly.
 
 ### What it writes
 
-The columns are found **by their heading**, not by position, so it lines up with your
-template even though that template has `correct_answer` sitting in the middle (which
-pushes the file-name columns along by one compared with the printed brief).
+Columns **A–I**: subject, paper, chapter, year, difficulty, marks, q_filename,
+ms_filename, youtube_url.
 
-It fills: subject, paper, chapter, year, difficulty, marks, correct_answer,
-q_filename, ms_filename, youtube_url.
+They are found **by their heading**, not by position, so if the template's layout ever
+shifts the tool still lines up with it.
 
 - **One press fills both file names.** `q_filename` gets `..._Q.png` and `ms_filename`
   gets `..._MS.png` from the same entry — you never type the mark scheme in.
-- **The image-URL columns are never written.** Those fill themselves, so the tool
-  leaves them alone; where a new row needs them, it copies the formulas down from the
-  row above, exactly as dragging a row does.
+- **Columns J and K are never written.** Those fill themselves, so the tool leaves them
+  alone; where a new row needs them, it copies the formulas down from the row above,
+  exactly as dragging a row does.
 - **`paper` holds the number only** (1–6). The variant lives in the file name, never
   in this column.
 - **`chapter` is written in its short form** (`coord-geom`, `dynamics`) so it is
@@ -263,6 +261,25 @@ by hand, but with the Excel button you no longer need it.
 
 ---
 
+## Part 5b — Sending it in (the CSV)
+
+The brief asks for a **CSV**, not the `.xlsx`. Once all your questions are in:
+
+1. Open `output/easify-topical-template.xlsx` in Excel.
+2. Make sure the **Questions** tab is the one showing.
+3. **File → Save As** (or *Download*), and pick **CSV (Comma delimited) (*.csv)**.
+4. Say yes to any warning about losing features or keeping only the active sheet —
+   that is expected, a CSV holds one tab.
+
+Columns J and K turn into plain links on their own during the export. Hand over that
+CSV **plus all the PNG images** — one folder is fine.
+
+> This step has to happen in Excel. Those two columns are formulas, and only Excel can
+> work out what they come to — the tool would have to guess, and a wrong link is worse
+> than no link.
+
+---
+
 ## Part 6 — Command line (optional, for bulk work)
 
 ```bash
@@ -282,16 +299,23 @@ Full list: `python photofuse.py --help`
 
 ---
 
-## Checklist before handing over the USB
+## Checklist before handing it over
 
 - [ ] Every image is in `output/` with its automatic name — **nothing renamed by hand**
 - [ ] Each question has both a `_Q.png` and a `_MS.png`
 - [ ] All names lowercase, ending in a lowercase `.png`, no spaces / commas / `/`
 - [ ] Crops are tight and readable, roughly 1000–1200 px wide
-- [ ] The **filled copy** of `aidify-topical-template.xlsx` from `output/` goes on the
-      USB — not your blank master
+- [ ] Rows added from the **copy** in `output/` — not your blank master
 - [ ] Columns A–I filled, J and K left alone
 - [ ] File names in the sheet match the images **exactly**, capitals included
+- [ ] Exported to **CSV** (Part 5b) — that is what you send, along with the PNGs
+
+### On the brief's "don't use AI to fuse images"
+
+That warning is about generative tools, which redraw the picture and can quietly change
+a number or leave a watermark. Photo Fuse does nothing of the sort: it crops, pads with
+white and stacks the actual pixels, exactly like stitching in Paint but without the
+slips. No pixel of your question is ever invented or redrawn.
 
 ---
 
