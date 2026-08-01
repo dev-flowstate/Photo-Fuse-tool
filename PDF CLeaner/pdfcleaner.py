@@ -23,6 +23,7 @@ import argparse
 import io
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -134,9 +135,13 @@ def first_question_page(doc: "fitz.Document") -> int:
 
     Question pages carry dotted answer rulings; the cover, the data sheet and
     the formulae pages do not. Falls back to page 1 if nothing matches.
+
+    Both the full stop and the ellipsis character count: some papers rule
+    their answer space with "…" rather than "...", and matching only the
+    latter used to skip the page holding question 1.
     """
     for index in range(doc.page_count):
-        if re.search(r"\.{20,}", doc[index].get_text("text")):
+        if re.search(r"[.…]{12,}", doc[index].get_text("text")):
             return index
     return 0
 
@@ -205,11 +210,15 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
         return True
 
     # Cambridge's anti-copy barcode fonts render as control characters. This
-    # is the strip that sits just above the first question. Whitespace is
-    # ignored: a two-line block like "0\n0" (a graph's axis labels) is normal
-    # text, and counting its newline as exotic would delete the labels.
+    # is the strip that sits just above the first question.
+    #
+    # Only true control/format codes count. "Anything outside plain ASCII" is
+    # far too broad for an exam paper: a table row reading
+    # "type of organism ……… bacterium ………" is a third ellipsis characters and
+    # was being deleted outright, and the same would go for any line carrying
+    # degrees, +/-, alpha or a superscript.
     visible = [ch for ch in body if not ch.isspace()]
-    odd = sum(1 for ch in visible if not (32 <= ord(ch) < 127))
+    odd = sum(1 for ch in visible if unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cn"))
     if len(visible) >= 6 and odd > len(visible) * 0.3:
         return True
 
@@ -267,46 +276,80 @@ def body_spans(page: "fitz.Page") -> list[tuple[float, float, str]]:
     return out
 
 
-def question_number_column(pages: list[list[tuple[float, float, str]]]) -> float | None:
+def _longest_run(numbers: list[int]) -> list[int]:
     """
-    The x position where question numbers sit.
+    Positions forming the longest chain that counts up by one.
 
-    On a Cambridge paper the question number is the only thing in the
-    left-most column - part labels like "(a)" are indented from it - so the
-    smallest x we see across the body text is that column.
+    Not simply "keep anything that follows the last kept number": a stray
+    figure label early on would then anchor the chain and throw away every
+    real question after it. This walks every possibility and keeps the best.
     """
-    xs = [x for spans in pages for x, _, _ in spans]
-    return min(xs) if xs else None
+    if not numbers:
+        return []
+    best_len = [1] * len(numbers)
+    previous: list[int | None] = [None] * len(numbers)
+
+    for i, value in enumerate(numbers):
+        for j in range(i):
+            if numbers[j] == value - 1 and best_len[j] + 1 > best_len[i]:
+                best_len[i] = best_len[j] + 1
+                previous[i] = j
+
+    # Longest chain wins; ties go to the one starting nearest question 1.
+    end = max(range(len(numbers)), key=lambda i: (best_len[i], -numbers[i]))
+    chain = []
+    node: int | None = end
+    while node is not None:
+        chain.append(node)
+        node = previous[node]
+    return chain[::-1]
 
 
 def find_question_starts(pages: list[list[tuple[float, float, str]]],
-                         tolerance: float = 6.0) -> list[tuple[int, float, int]]:
+                         tolerance: float = 4.0) -> list[tuple[int, float, int]]:
     """
     Locate where each question begins.
 
-    Returns (page position in the selection, y in points, question number).
-    A candidate is a bare 1-2 digit number sitting in the question-number
-    column; candidates are then kept only while they count up 1, 2, 3..., so
-    a stray figure label can't start a bogus question.
-    """
-    column = question_number_column(pages)
-    if column is None:
-        return []
+    Returns (page position, y in points, question number).
 
+    Question numbers share one x position, further left than part labels like
+    "(a)". Rather than assuming that is the left-most text on the page - a
+    graph's axis caption is often further left still, which is exactly what
+    used to break Biology papers - every column containing bare numbers is
+    considered, and the one whose numbers count 1, 2, 3... furthest wins.
+    """
     candidates = []
     for index, spans in enumerate(pages):
         for x0, y0, text in spans:
-            if re.fullmatch(r"\d{1,2}", text) and abs(x0 - column) <= tolerance:
-                candidates.append((index, y0, int(text)))
-    candidates.sort(key=lambda c: (c[0], c[1]))
+            if re.fullmatch(r"\d{1,2}", text):
+                candidates.append((x0, index, y0, int(text)))
+    if not candidates:
+        return []
 
-    starts: list[tuple[int, float, int]] = []
-    for index, y0, number in candidates:
-        if not starts:
-            starts.append((index, y0, number))
-        elif number == starts[-1][2] + 1:
-            starts.append((index, y0, number))
-    return starts
+    best: list[tuple[int, float, int]] = []
+    best_score = ()
+    for seed_x, _, _, _ in candidates:
+        column = [c for c in candidates if abs(c[0] - seed_x) <= tolerance]
+        column.sort(key=lambda c: (c[1], c[2]))         # reading order
+        chain = _longest_run([c[3] for c in column])
+        if len(chain) < 2:
+            continue
+        picked = [(column[i][1], column[i][2], column[i][3]) for i in chain]
+
+        # How many pages the run is spread over comes first, ahead of how
+        # long it is. A numbered list inside one question - the NATO alphabet
+        # on a Computer Science paper, a list of essay titles - can easily run
+        # longer than the real question numbers, but it never leaves its page.
+        score = (len({p for p, _, _ in picked}), len(picked), -seed_x)
+        if score > best_score:
+            best_score, best = score, picked
+
+    if len(best) < 2:
+        return []
+    # In anything longer than a short extract, questions reach past one page.
+    if best_score[0] < 2 and len(pages) > 5:
+        return []
+    return best
 
 
 def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
@@ -547,28 +590,36 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
         raise ValueError("That PDF has no pages.")
 
     try:
-        if s.skip_front_matter and not s.pages.strip():
-            start = first_question_page(doc)
+        # Read the whole document's text first. The question numbers answer
+        # two things at once: where each question begins, and where the front
+        # matter ends - so the page range no longer rests on spotting dotted
+        # answer rulings, which some papers draw differently.
+        all_spans = []
+        for index in range(doc.page_count):
+            page = doc[index]
+            if s.strip_furniture:
+                strip_furniture(page)
+            all_spans.append(body_spans(page))
+
+        found = find_question_starts(all_spans)
+
+        if s.pages.strip():
+            wanted = parse_pages(s.pages, doc.page_count)
+        elif s.skip_front_matter:
+            start = found[0][0] if found else first_question_page(doc)
             wanted = list(range(start, doc.page_count))
         else:
-            wanted = parse_pages(s.pages, doc.page_count)
+            wanted = list(range(doc.page_count))
+
         first = doc[wanted[0]]
         page_w_pt, page_h_pt = first.rect.width, first.rect.height
 
-        # First pass: drop the furniture, then read the text layer. The
-        # question-number column and the 1, 2, 3... sequence can only be
-        # judged across the whole selection, not page by page - a page that
-        # opens with "(b)" has no number on it at all.
+        position_of = {index: i for i, index in enumerate(wanted)}
         starts_by_page: dict[int, list[tuple[float, int]]] = {}
         if s.split_questions:
-            spans = []
-            for index in wanted:
-                page = doc[index]
-                if s.strip_furniture:
-                    strip_furniture(page)
-                spans.append(body_spans(page))
-            for position, y, number in find_question_starts(spans):
-                starts_by_page.setdefault(position, []).append((y, number))
+            for index, y, number in found:
+                if index in position_of:
+                    starts_by_page.setdefault(position_of[index], []).append((y, number))
 
         cleaned: list[Image.Image] = []
         page_marks: list[list[tuple[int, int]]] = []   # per page: (row, number)

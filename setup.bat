@@ -94,8 +94,64 @@ echo   Checking
 echo --------------------------------------------------------------
 echo.
 %PY% check_setup.py --fix
+rem 2 means a library is installed but Windows cannot load it - that is the
+rem Visual C++ runtime missing, which pip can do nothing about.
+if errorlevel 2 goto vcredist
 if errorlevel 1 goto checkfailed
+goto alldone
 
+rem ==============================================================
+rem  Missing Visual C++ runtime
+rem ==============================================================
+:vcredist
+echo.
+echo --------------------------------------------------------------
+echo   One more Windows piece is needed
+echo --------------------------------------------------------------
+echo.
+echo PyMuPDF is installed correctly, but it is partly written in C
+echo and needs Microsoft's Visual C++ runtime, which this PC does
+echo not have yet. Plenty of programs need it; it is a normal part
+echo of Windows that simply is not always present.
+echo.
+echo Downloading it from Microsoft (about 25 MB).
+echo Windows will ask permission to install it - click YES.
+echo.
+
+set "VCARCH=x64"
+if /i "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "VCARCH=arm64"
+if /i "%PROCESSOR_ARCHITEW6432%"=="ARM64" set "VCARCH=arm64"
+set "VCURL=https://aka.ms/vs/17/release/vc_redist.%VCARCH%.exe"
+set "VCEXE=%TEMP%\vc_redist.%VCARCH%.exe"
+if exist "%VCEXE%" del "%VCEXE%" >nul 2>&1
+
+where curl.exe >nul 2>&1
+if errorlevel 1 goto vcps
+curl.exe -L --fail --progress-bar -o "%VCEXE%" "%VCURL%"
+goto vcgot
+
+:vcps
+powershell -NoProfile -Command "try { Invoke-WebRequest -Uri '%VCURL%' -OutFile '%VCEXE%' -UseBasicParsing } catch { exit 1 }"
+
+:vcgot
+if not exist "%VCEXE%" goto vcfailed
+echo.
+echo Installing the Visual C++ runtime...
+"%VCEXE%" /install /passive /norestart
+set "VCCODE=%errorlevel%"
+del "%VCEXE%" >nul 2>&1
+if "%VCCODE%"=="1223" goto vccancelled
+
+echo.
+echo Checking again...
+echo.
+%PY% check_setup.py --fix
+if errorlevel 2 goto vcstillbad
+if errorlevel 1 goto checkfailed
+if "%VCCODE%"=="3010" goto vcrestart
+goto alldone
+
+:alldone
 echo.
 echo ==============================================================
 echo   All done - everything is installed.
@@ -107,6 +163,54 @@ echo    "PDF CLeaner\2 - START PDF Cleaner.bat"   to clean a paper
 echo.
 pause
 exit /b 0
+
+:vcrestart
+echo.
+echo ==============================================================
+echo   All done - please restart the computer
+echo ==============================================================
+echo.
+echo Windows wants a restart to finish setting up the runtime.
+echo After restarting, everything is ready to use.
+echo.
+pause
+exit /b 0
+
+:vccancelled
+echo.
+echo The Visual C++ runtime was not installed - the permission
+echo prompt was declined.
+echo.
+echo PDF Cleaner cannot work without it. Photo Fuse is unaffected
+echo and works right now.
+echo.
+echo To finish later, run setup.bat again and click YES, or install
+echo it by hand from:
+echo    %VCURL%
+echo.
+pause
+exit /b 1
+
+:vcstillbad
+echo.
+echo The runtime installed but the library still will not load.
+echo Please RESTART the computer and run setup.bat once more -
+echo that resolves it in almost every case.
+echo.
+pause
+exit /b 1
+
+:vcfailed
+echo.
+echo Could not download the Visual C++ runtime.
+echo.
+echo Install it by hand from this address, then restart:
+echo    %VCURL%
+echo.
+echo Photo Fuse works without it - this only affects PDF Cleaner.
+echo.
+pause
+exit /b 1
 
 rem ==============================================================
 rem  Problems

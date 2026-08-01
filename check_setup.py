@@ -182,12 +182,13 @@ def main(argv: list[str] | None = None) -> int:
     explain(notes)
 
     # Reinstalling cannot help something that is present but will not load.
+    # Exit code 2 tells setup.bat to fetch the runtime rather than pip.
     if any("dll load failed" in n.lower()
            or "specified module could not be found" in n.lower() for n in notes):
         print("  Installing it again will NOT help - it is already there.")
         print("  Fix the runtime above first.")
         print()
-        return 1
+        return 2
 
     print("  If you are sure you installed these already, they went into a")
     print("  different Python on this computer. What matters is getting them")

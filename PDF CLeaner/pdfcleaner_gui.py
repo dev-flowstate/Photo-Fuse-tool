@@ -299,11 +299,14 @@ class App(ttk.Frame):
 
                     extra = ""
                     if result.questions:
-                        extra = f"  {len(result.questions)} questions saved separately."
+                        extra = (f"  {len(result.questions)} questions saved in "
+                                 f"{result.questions_dir.name}\\.")
                     elif self.o["split_questions"].get():
                         extra = "  No question numbers were found, so no separate PNGs."
+                    # The full path, not just the file name: without it there
+                    # is no way to tell the chosen folder was actually used.
                     self.set_status(
-                        f"Saved {result.path.name} - {result.pages_in} pages in, "
+                        f"Saved to {result.path}  -  {result.pages_in} pages in, "
                         f"{result.pages_out} out, {result.saved_percent:.0f}% of the "
                         f"vertical space removed.{extra}"
                     )

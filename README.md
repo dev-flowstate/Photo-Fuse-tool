@@ -27,7 +27,10 @@ That is the whole thing. It:
 2. **if Python is missing, downloads it from python.org and installs it** — for
    your account only, so no administrator password is needed;
 3. installs Pillow, numpy, openpyxl and PyMuPDF into that exact Python;
-4. checks it all worked and tells you if anything is still wrong.
+4. **if Windows is missing the Visual C++ runtime**, fetches that from Microsoft
+   too (PyMuPDF is partly written in C and will not load without it — click *Yes*
+   on the permission prompt);
+5. checks it all worked and tells you if anything is still wrong.
 
 Leave it running; the first time takes a few minutes. When it finishes, start the
 tools with `2 - START Photo Fuse.bat`.
@@ -288,6 +291,7 @@ launchers quietly fall back to finding Python themselves.
 | `'python' is not recognized` | Same cause — use `py` instead of `python` everywhere |
 | `'pip' is not recognized` | Use `py -m pip ...` instead of `pip ...` |
 | `python` opens the Microsoft Store | That is a Windows placeholder, not Python. Use `py`, or install from python.org |
+| `DLL load failed while importing _extra` | Windows is missing the Visual C++ runtime. `setup.bat` installs it for you; by hand it is <https://aka.ms/vs/17/release/vc_redist.x64.exe>, then restart. Reinstalling PyMuPDF cannot help — it is already there |
 | `ModuleNotFoundError` for anything | Run **`Check setup.bat`** — it names the Python in use and prints the exact install command |
 | "I already installed that package!" | You have two Pythons. See section 6 — use `python-path.txt` or re-run the INSTALL file |
 | Python is on D: / a USB / Anaconda | Put its `python.exe` path in `python-path.txt` (section 6) |
