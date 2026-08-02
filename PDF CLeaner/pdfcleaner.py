@@ -227,6 +227,22 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     if any(k in body for k in ("UCLES", "Turn over", "BLANK PAGE")):
         return True
 
+    # A mark scheme repeats a banner and a table heading on every page, which
+    # would otherwise land in the middle of a question where pages join. Both
+    # come through as whole blocks - "PUBLISHED May/June 2017" and
+    # "Question Answer Marks" - so they are matched as such.
+    if "Mark Scheme" in body:
+        return True
+    near_heading = rect.y1 < page_rect.height * 0.16
+    if near_heading and "PUBLISHED" in body:
+        return True
+    if near_heading:
+        words = body.lower().replace("/", " ").split()
+        columns = {"question", "answer", "answers", "mark", "marks",
+                   "guidance", "notes", "part"}
+        if words and all(word in columns for word in words):
+            return True
+
     # The copyright notice on the final page. These phrases never turn up in
     # a question, so matching them is safe.
     lowered = body.lower()
@@ -244,36 +260,91 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     return False
 
 
-def strip_furniture(page: "fitz.Page") -> None:
-    """Permanently blank the headers, footers and margin bars on this page."""
-    targets = []
+def _as_shown(page: "fitz.Page", rect: "fitz.Rect") -> "fitz.Rect":
+    """
+    Put a text rectangle into the coordinates the page is drawn in.
+
+    Text comes out of PyMuPDF in the page's own, unrotated space. Mark
+    schemes are portrait pages carrying /Rotate 90, so their text y values
+    run to 789 on a page that displays as 595 tall - and every rule about
+    "near the bottom" then fires on the middle of the answers.
+    """
+    rotation = getattr(page, "rotation", 0)
+    return (rect * page.rotation_matrix) if rotation else rect
+
+
+def furniture_rects(page: "fitz.Page") -> list["fitz.Rect"]:
+    """Headers, footers and margin bars, in the coordinates the page shows."""
+    shown = page.rect
+    found = []
     for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
-        rect = fitz.Rect(x0, y0, x1, y1)
-        if _is_furniture(text, rect, page.rect):
-            targets.append(rect)
-    if not targets:
+        rect = _as_shown(page, fitz.Rect(x0, y0, x1, y1))
+        if _is_furniture(text, rect, shown):
+            found.append(rect)
+    return found
+
+
+def strip_furniture(page: "fitz.Page") -> None:
+    """
+    Blank the headers, footers and margin bars on this page.
+
+    Redaction works in the page's own space, so the rectangles are converted
+    back out of display coordinates before being applied.
+    """
+    rects = furniture_rects(page)
+    if not rects:
         return
-    for rect in targets:
-        page.add_redact_annot(rect)
+    back = ~page.rotation_matrix if getattr(page, "rotation", 0) else None
+    for rect in rects:
+        page.add_redact_annot(rect * back if back else rect)
     try:
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
     except (AttributeError, TypeError):           # older PyMuPDF signature
         page.apply_redactions()
 
 
-def body_spans(page: "fitz.Page") -> list[tuple[float, float, str]]:
-    """Every non-empty text span in the body area, as (x0, y0, text)."""
+def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
+    """
+    Every non-empty text span in the body area, as (left, centre, y, text).
+
+    Both the left edge and the horizontal centre are kept because question
+    labels are left-aligned on a question paper but centred in a mark
+    scheme's Question column - where "7(a)(i)" starts well left of "1(a)"
+    while the two share a centre.
+
+    Coordinates are the ones the page displays in, so they line up with the
+    rendered image whatever rotation the PDF carries.
+    """
     out = []
-    top = page.rect.height * 0.07
-    bottom = page.rect.height * 0.93
+    shown = page.rect
+    top = shown.height * 0.07
+    bottom = shown.height * 0.93
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
                 text = span["text"].strip()
-                x0, y0 = span["bbox"][0], span["bbox"][1]
-                if text and top < y0 < bottom:
-                    out.append((x0, y0, text))
+                if not text:
+                    continue
+                box = _as_shown(page, fitz.Rect(*span["bbox"]))
+                if top < box.y0 < bottom:
+                    out.append((box.x0, (box.x0 + box.x1) / 2, box.y0, text))
     return out
+
+
+#: "1", and the mark-scheme forms "1(a)", "1(b)(i)", "2(b)(iv)1.", "3(c)(ii)".
+_QUESTION_LABEL = re.compile(r"(\d{1,2})\s*(?:\(.*)?\.?$")
+
+
+def _question_number(text: str) -> int | None:
+    """The question a label belongs to, or None if it is not one."""
+    body = text.strip()
+    if not body or not body[0].isdigit():
+        return None
+    match = _QUESTION_LABEL.fullmatch(body)
+    if not match:
+        return None
+    number = int(match.group(1))
+    return number if 1 <= number <= 40 else None
 
 
 def _longest_run(numbers: list[int]) -> list[int]:
@@ -318,38 +389,111 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     used to break Biology papers - every column containing bare numbers is
     considered, and the one whose numbers count 1, 2, 3... furthest wins.
     """
-    candidates = []
+    raw = []
     for index, spans in enumerate(pages):
-        for x0, y0, text in spans:
-            if re.fullmatch(r"\d{1,2}", text):
-                candidates.append((x0, index, y0, int(text)))
-    if not candidates:
+        for left, centre, y0, text in spans:
+            number = _question_number(text)
+            if number is not None:
+                raw.append((left, centre, index, y0, number))
+    if not raw:
         return []
 
     best: list[tuple[int, float, int]] = []
+    best_column: list[tuple[int, float, int]] = []
     best_score = ()
-    for seed_x, _, _, _ in candidates:
-        column = [c for c in candidates if abs(c[0] - seed_x) <= tolerance]
-        column.sort(key=lambda c: (c[1], c[2]))         # reading order
-        chain = _longest_run([c[3] for c in column])
-        if len(chain) < 2:
-            continue
-        picked = [(column[i][1], column[i][2], column[i][3]) for i in chain]
+    best_key, best_x = 0, 0.0
 
-        # How many pages the run is spread over comes first, ahead of how
-        # long it is. A numbered list inside one question - the NATO alphabet
-        # on a Computer Science paper, a list of essay titles - can easily run
-        # longer than the real question numbers, but it never leaves its page.
-        score = (len({p for p, _, _ in picked}), len(picked), -seed_x)
-        if score > best_score:
-            best_score, best = score, picked
+    # Try lining the labels up by their left edges and by their centres:
+    # question papers align one way, mark schemes the other.
+    for key in (0, 1):
+        candidates = [(c[key], c[2], c[3], c[4]) for c in raw]
+
+        # A mark scheme lists every part in its Question column - 1(a),
+        # 1(b)(i), 1(b)(ii)... - so the same number recurs many times. Only
+        # its first appearance starts a question.
+        seen: set[tuple[int, int]] = set()
+        unique = []
+        for x, index, y0, number in sorted(candidates, key=lambda c: (c[1], c[2])):
+            slot = (round(x / max(1.0, tolerance)), number)
+            if slot not in seen:
+                seen.add(slot)
+                unique.append((x, index, y0, number))
+
+        for seed_x, _, _, _ in unique:
+            column = [c for c in unique if abs(c[0] - seed_x) <= tolerance]
+            column.sort(key=lambda c: (c[1], c[2]))     # reading order
+            chain = _longest_run([c[3] for c in column])
+            if len(chain) < 2:
+                continue
+            picked = [(column[i][1], column[i][2], column[i][3]) for i in chain]
+
+            # How many pages the run is spread over comes first, ahead of how
+            # long it is. A numbered list inside one question - the NATO
+            # alphabet on a Computer Science paper, a list of essay titles -
+            # can easily run longer than the real question numbers, but it
+            # never leaves its page.
+            score = (len({p for p, _, _ in picked}), len(picked), -seed_x)
+            if score > best_score:
+                best_score, best = score, picked
+                best_key, best_x = key, seed_x
+                best_column = [(c[1], c[2], c[3]) for c in column]
 
     if len(best) < 2:
         return []
     # In anything longer than a short extract, questions reach past one page.
     if best_score[0] < 2 and len(pages) > 5:
         return []
-    return best
+
+    # Now that the column is known, recover any number the strict label match
+    # missed, then re-form the run over the completed set.
+    filled = _fill_gaps(pages, best_column, best_key, best_x, tolerance)
+    chain = _longest_run([n for _, _, n in filled])
+    return [filled[i] for i in chain]
+
+
+def _fill_gaps(pages, column: list[tuple[int, float, int]], key: int,
+               column_x: float, tolerance: float) -> list[tuple[int, float, int]]:
+    """
+    Recover a question whose number was swallowed by its own text.
+
+    Typesetting sometimes runs the label and the wording into one span, as in
+    "10 The complex number...", which no longer reads as a bare label - and
+    losing number 10 costs you 11 too, because the run stops there. Only the
+    column already identified is searched, and only for numbers missing from
+    it, so nothing else can creep in.
+    """
+    found = sorted(column, key=lambda c: (c[0], c[1]))
+    have = {n for _, _, n in found}
+    if not have:
+        return found
+    missing = [n for n in range(min(have), max(have) + 1) if n not in have]
+    if not missing:
+        return found
+
+    recovered = list(found)
+    for number in missing:
+        # It has to sit between the questions either side of it.
+        before = max([(p, y) for p, y, n in found if n < number], default=(-1, -1.0))
+        after = min([(p, y) for p, y, n in found if n > number], default=(10 ** 6, 0.0))
+        pattern = re.compile(rf"^{number}(?=$|[\s(])")
+
+        hit = None
+        for index, spans in enumerate(pages):
+            for left, centre, y, text in spans:
+                x = left if key == 0 else centre
+                if abs(x - column_x) > tolerance or not pattern.match(text.strip()):
+                    continue
+                if (index, y) <= before or (index, y) >= after:
+                    continue
+                hit = (index, y, number)
+                break
+            if hit:
+                break
+        if hit:
+            recovered.append(hit)
+
+    recovered.sort(key=lambda c: (c[0], c[1]))
+    return recovered
 
 
 def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
