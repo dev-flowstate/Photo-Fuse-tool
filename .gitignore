@@ -31,6 +31,9 @@ PDF CLeaner/output/*
 input/*
 !input/PUT RAW CROPS HERE.txt
 
+# graphify knowledge graph - regenerate with /graphify, not worth versioning
+graphify-out/
+
 # Windows
 desktop.ini
 Thumbs.db

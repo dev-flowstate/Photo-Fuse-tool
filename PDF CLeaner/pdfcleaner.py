@@ -106,6 +106,7 @@ class CleanSettings:
 
     split_questions: bool = False        # also write one PNG per question
     question_margin_pt: float = 6.0      # white border on those PNGs
+    save_pdf: bool = True                # False = question PNGs only, no PDF
 
     def fuse_settings(self) -> pf.Settings:
         """Translate into the Photo Fuse settings object, in pixels."""
@@ -144,6 +145,29 @@ def first_question_page(doc: "fitz.Document") -> int:
         if re.search(r"[.…]{12,}", doc[index].get_text("text")):
             return index
     return 0
+
+
+#: The heading over a mark scheme's answer table, in reading order.
+_ANSWER_TABLE = re.compile(r"Question\s+Answer\s+(?:Marks|Mark)", re.I)
+
+
+def first_answer_table_page(doc: "fitz.Document") -> int | None:
+    """
+    Where a mark scheme's answers begin, or None if this is not one.
+
+    Everything before it is the examiners' preamble - generic marking
+    principles and a numbered list of guidance ("1 Examiners should consider
+    the context...", "2 The examiner should not..."). That list counts up
+    exactly like question numbers and is longer than the real sequence on a
+    two-question paper, so it wins on every measure unless it is excluded
+    outright.
+
+    Read before the furniture is stripped, since the heading is furniture.
+    """
+    for index in range(doc.page_count):
+        if _ANSWER_TABLE.search(" ".join(doc[index].get_text("text").split())):
+            return index
+    return None
 
 
 def page_count(path: str | Path) -> int:
@@ -288,19 +312,42 @@ def strip_furniture(page: "fitz.Page") -> None:
     """
     Blank the headers, footers and margin bars on this page.
 
+    A header is widened to the full page before being removed, and line art
+    inside it goes with the text. Older mark schemes rule their header as a
+    table, and deleting only the words left its cell borders behind - which
+    then turned up as stray rules in the middle of a question wherever two
+    pages were joined.
+
     Redaction works in the page's own space, so the rectangles are converted
     back out of display coordinates before being applied.
     """
     rects = furniture_rects(page)
     if not rects:
         return
-    back = ~page.rotation_matrix if getattr(page, "rotation", 0) else None
+
+    shown = page.rect
+    band = shown.height * 0.16
+    widened = []
     for rect in rects:
+        if rect.y1 < band or rect.y0 > shown.height - band:
+            rect = fitz.Rect(shown.x0, rect.y0, shown.x1, rect.y1)
+        widened.append(rect)
+
+    back = ~page.rotation_matrix if getattr(page, "rotation", 0) else None
+    for rect in widened:
         page.add_redact_annot(rect * back if back else rect)
-    try:
-        page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
-    except (AttributeError, TypeError):           # older PyMuPDF signature
-        page.apply_redactions()
+
+    for kwargs in (
+        {"images": fitz.PDF_REDACT_IMAGE_NONE,
+         "graphics": fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED},
+        {"images": fitz.PDF_REDACT_IMAGE_NONE},
+        {},
+    ):
+        try:
+            page.apply_redactions(**kwargs)
+            return
+        except (AttributeError, TypeError):       # older PyMuPDF signature
+            continue
 
 
 def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
@@ -317,8 +364,13 @@ def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
     """
     out = []
     shown = page.rect
-    top = shown.height * 0.07
-    bottom = shown.height * 0.93
+    # Only a sliver is excluded. Headers and footers are already gone by
+    # redaction, and a wider margin costs real content: some mark schemes
+    # print a question number right at the top of the page, where a 7% guard
+    # swallowed it - and losing question 1 loses everything before the next
+    # number that survives.
+    top = shown.height * 0.02
+    bottom = shown.height * 0.98
     for block in page.get_text("dict")["blocks"]:
         for line in block.get("lines", []):
             for span in line["spans"]:
@@ -406,37 +458,47 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     # Try lining the labels up by their left edges and by their centres:
     # question papers align one way, mark schemes the other.
     for key in (0, 1):
-        candidates = [(c[key], c[2], c[3], c[4]) for c in raw]
+        # (aligning x, left edge, page, y, number) - the left edge travels
+        # along so gap filling can use it later.
+        candidates = [(c[key], c[0], c[2], c[3], c[4]) for c in raw]
 
         # A mark scheme lists every part in its Question column - 1(a),
         # 1(b)(i), 1(b)(ii)... - so the same number recurs many times. Only
         # its first appearance starts a question.
         seen: set[tuple[int, int]] = set()
         unique = []
-        for x, index, y0, number in sorted(candidates, key=lambda c: (c[1], c[2])):
+        for x, left, index, y0, number in sorted(candidates, key=lambda c: (c[2], c[3])):
             slot = (round(x / max(1.0, tolerance)), number)
             if slot not in seen:
                 seen.add(slot)
-                unique.append((x, index, y0, number))
+                unique.append((x, left, index, y0, number))
 
-        for seed_x, _, _, _ in unique:
+        for seed_x, _, _, _, _ in unique:
             column = [c for c in unique if abs(c[0] - seed_x) <= tolerance]
-            column.sort(key=lambda c: (c[1], c[2]))     # reading order
-            chain = _longest_run([c[3] for c in column])
+            column.sort(key=lambda c: (c[2], c[3]))     # reading order
+            chain = _longest_run([c[4] for c in column])
             if len(chain) < 2:
                 continue
-            picked = [(column[i][1], column[i][2], column[i][3]) for i in chain]
+            picked = [(column[i][2], column[i][3], column[i][4]) for i in chain]
 
             # How many pages the run is spread over comes first, ahead of how
             # long it is. A numbered list inside one question - the NATO
             # alphabet on a Computer Science paper, a list of essay titles -
             # can easily run longer than the real question numbers, but it
             # never leaves its page.
-            score = (len({p for p, _, _ in picked}), len(picked), -seed_x)
+            #
+            # Distinct numbers in the whole column breaks ties, because the
+            # column is read permissively afterwards: where two columns tie on
+            # their consecutive run, the one holding more question numbers is
+            # the one that yields more questions. Left-aligned labels of
+            # differing width ("2" against "10(b)") can otherwise split one
+            # real column in two, and the poorer half was winning on position.
+            score = (len({p for p, _, _ in picked}), len(picked),
+                     len({c[4] for c in column}), -seed_x)
             if score > best_score:
                 best_score, best = score, picked
                 best_key, best_x = key, seed_x
-                best_column = [(c[1], c[2], c[3]) for c in column]
+                best_column = [(c[2], c[3], c[4], c[1]) for c in column]
 
     if len(best) < 2:
         return []
@@ -445,43 +507,77 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
         return []
 
     # Now that the column is known, recover any number the strict label match
-    # missed, then re-form the run over the completed set.
+    # missed, then take everything from it that still counts upwards.
+    #
+    # Counting up by exactly one is the right test for *choosing* the column -
+    # it is what separates real question numbers from stray digits. It is the
+    # wrong test for *reading* the chosen column: where a paper prints no
+    # label at all for question 3, insisting on 1,2,3,4 would discard 1 and 2
+    # to keep 7..12. Merely increasing keeps all of them, and a question whose
+    # own start was never found simply stays joined to the one before it.
     filled = _fill_gaps(pages, best_column, best_key, best_x, tolerance)
-    chain = _longest_run([n for _, _, n in filled])
+    chain = _longest_increasing([n for _, _, n in filled])
     return [filled[i] for i in chain]
 
 
-def _fill_gaps(pages, column: list[tuple[int, float, int]], key: int,
+def _longest_increasing(numbers: list[int]) -> list[int]:
+    """Positions forming the longest strictly increasing run (gaps allowed)."""
+    if not numbers:
+        return []
+    best_len = [1] * len(numbers)
+    previous: list[int | None] = [None] * len(numbers)
+    for i, value in enumerate(numbers):
+        for j in range(i):
+            if numbers[j] < value and best_len[j] + 1 > best_len[i]:
+                best_len[i] = best_len[j] + 1
+                previous[i] = j
+    end = max(range(len(numbers)), key=lambda i: (best_len[i], -numbers[i]))
+    chain = []
+    node: int | None = end
+    while node is not None:
+        chain.append(node)
+        node = previous[node]
+    return chain[::-1]
+
+
+def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
                column_x: float, tolerance: float) -> list[tuple[int, float, int]]:
     """
     Recover a question whose number was swallowed by its own text.
 
     Typesetting sometimes runs the label and the wording into one span, as in
-    "10 The complex number...", which no longer reads as a bare label - and
-    losing number 10 costs you 11 too, because the run stops there. Only the
-    column already identified is searched, and only for numbers missing from
-    it, so nothing else can creep in.
+    "10 The complex number..." or "3 Use the quadratic formula M1", which no
+    longer reads as a bare label - and losing 3 costs you 1 and 2 as well,
+    because the run has to be consecutive.
+
+    Such a span is matched on its LEFT edge, never its centre: the trailing
+    wording drags the centre far to the right while the left edge stays on
+    the column. The search covers 1 upwards, since a paper starts at 1 even
+    when the strict pass first saw question 7.
     """
-    found = sorted(column, key=lambda c: (c[0], c[1]))
-    have = {n for _, _, n in found}
-    if not have:
+    found = sorted([(c[0], c[1], c[2]) for c in column], key=lambda c: (c[0], c[1]))
+    lefts = [c[3] for c in column]
+    if not found:
         return found
-    missing = [n for n in range(min(have), max(have) + 1) if n not in have]
+    have = {n for _, _, n in found}
+    low, high = min(lefts) - tolerance, max(lefts) + tolerance
+    missing = [n for n in range(1, max(have) + 1) if n not in have]
     if not missing:
         return found
 
     recovered = list(found)
     for number in missing:
         # It has to sit between the questions either side of it.
-        before = max([(p, y) for p, y, n in found if n < number], default=(-1, -1.0))
-        after = min([(p, y) for p, y, n in found if n > number], default=(10 ** 6, 0.0))
+        before = max([(p, y) for p, y, n in recovered if n < number], default=(-1, -1.0))
+        after = min([(p, y) for p, y, n in recovered if n > number], default=(10 ** 6, 0.0))
         pattern = re.compile(rf"^{number}(?=$|[\s(])")
 
         hit = None
         for index, spans in enumerate(pages):
             for left, centre, y, text in spans:
-                x = left if key == 0 else centre
-                if abs(x - column_x) > tolerance or not pattern.match(text.strip()):
+                aligned = (low <= left <= high
+                           or abs((left if key == 0 else centre) - column_x) <= tolerance)
+                if not aligned or not pattern.match(text.strip()):
                     continue
                 if (index, y) <= before or (index, y) >= after:
                     continue
@@ -491,8 +587,8 @@ def _fill_gaps(pages, column: list[tuple[int, float, int]], key: int,
                 break
         if hit:
             recovered.append(hit)
+            recovered.sort(key=lambda c: (c[0], c[1]))
 
-    recovered.sort(key=lambda c: (c[0], c[1]))
     return recovered
 
 
@@ -738,6 +834,9 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
         # two things at once: where each question begins, and where the front
         # matter ends - so the page range no longer rests on spotting dotted
         # answer rulings, which some papers draw differently.
+        # Read before stripping: the answer-table heading is itself furniture.
+        answers_from = first_answer_table_page(doc)
+
         all_spans = []
         for index in range(doc.page_count):
             page = doc[index]
@@ -745,7 +844,14 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
                 strip_furniture(page)
             all_spans.append(body_spans(page))
 
-        found = find_question_starts(all_spans)
+        # A mark scheme's preamble is not searched for questions - its
+        # numbered guidance list would otherwise be read as the paper.
+        searchable = all_spans
+        if answers_from:
+            searchable = [[] if i < answers_from else spans
+                          for i, spans in enumerate(all_spans)]
+
+        found = find_question_starts(searchable)
 
         if s.pages.strip():
             wanted = parse_pages(s.pages, doc.page_count)
@@ -821,7 +927,11 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
     if dst.is_dir() or dst.suffix.lower() != ".pdf":
         dst = dst / f"{src.stem}_cleaned.pdf"
 
-    write_pdf(slices, dst, page_w_pt, page_h_pt, s)
+    # Skipping the PDF is worth it in bulk: at high dpi writing it costs about
+    # as much again as everything before it, and a batch may only want the
+    # per-question images.
+    if s.save_pdf:
+        write_pdf(slices, dst, page_w_pt, page_h_pt, s)
 
     questions: list[Path] = []
     questions_dir: Path | None = None
