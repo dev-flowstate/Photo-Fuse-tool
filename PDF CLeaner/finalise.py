@@ -1,0 +1,113 @@
+"""
+Separate the question images that pass every check from the ones that do not.
+
+Reads the audit and files each paper's images accordingly. Nothing is
+deleted: a paper with a fault keeps its images where they are, so a defect
+can still be looked at, and only the clean ones move.
+
+    py finalise.py                 (report what would move)
+    py finalise.py --apply         (move them and write the manifest)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+OUT = Path(r"D:\Papers\output questions and markschemes")
+
+#: Faults that do not make the images wrong. A paper whose text arrives in
+#: fragments is only worth knowing about if something came of it, and the
+#: something would be one of the other faults.
+HARMLESS = {"shredded", "mixed-rotation"}
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="File the clean question images.")
+    p.add_argument("--out", default=str(OUT))
+    p.add_argument("--apply", action="store_true", help="actually move them")
+    a = p.parse_args(argv)
+
+    out = Path(a.out)
+    report = out / "audit.json"
+    if not report.is_file():
+        print(f"No audit to read. Run audit.py first.\n  looked in {report}")
+        return 1
+    rows = json.loads(report.read_text(encoding="utf-8"))
+
+    images: dict[str, list[Path]] = defaultdict(list)
+    for png in out.rglob("*.png"):
+        if "_q" in png.stem:
+            images[png.stem.rsplit("_q", 1)[0]].append(png)
+
+    clean, dirty = [], []
+    reasons: Counter = Counter()
+    for row in rows:
+        faults = set(row.get("faults", ())) - HARMLESS
+        held = sorted(images.get(row["name"], ()))
+        if not held:
+            continue
+        if faults:
+            dirty.append((row, held))
+            reasons.update(faults)
+        else:
+            clean.append((row, held))
+
+    kept = sum(len(held) for _, held in clean)
+    left = sum(len(held) for _, held in dirty)
+    print(f"{len(clean)} papers clean  ({kept} images)")
+    print(f"{len(dirty)} papers with faults  ({left} images)")
+    print("\nwhy the rest are held back:")
+    for fault, count in reasons.most_common():
+        print(f"   {fault:<16} {count}")
+
+    if not a.apply:
+        print("\nreport only - pass --apply to move them and write the manifest")
+        return 0
+
+    moved = 0
+    for row, held in clean:
+        where = "markschemes_clean" if row["name"].find("_ms_") >= 0 else "questions_clean"
+        dest = out / where
+        dest.mkdir(exist_ok=True)
+        for png in held:
+            target = dest / png.name
+            if target.exists():
+                target.unlink()
+            shutil.move(str(png), str(target))
+            moved += 1
+
+    manifest = out / "clean questions.txt"
+    with manifest.open("w", encoding="utf-8") as fh:
+        fh.write(f"{kept} question images from {len(clean)} papers, "
+                 f"every one passing every check\n\n")
+        by_syllabus: Counter = Counter()
+        for row, held in clean:
+            by_syllabus[row["name"][:4]] += len(held)
+        for code in sorted(by_syllabus):
+            fh.write(f"  {code}: {by_syllabus[code]} images\n")
+        fh.write("\n")
+        for row, held in sorted(clean, key=lambda r: r[0]["name"]):
+            for png in held:
+                fh.write(f"{png.name}\n")
+
+    remaining = out / "still defective.txt"
+    with remaining.open("w", encoding="utf-8") as fh:
+        fh.write(f"{len(dirty)} papers held back\n\n")
+        for row, held in sorted(dirty, key=lambda r: r[0]["name"]):
+            faults = ", ".join(sorted(set(row["faults"]) - HARMLESS))
+            fh.write(f"{row['name']:<24} {faults}\n")
+
+    print(f"\nmoved {moved} images")
+    print(f"  {out / 'questions_clean'}")
+    print(f"  {out / 'markschemes_clean'}")
+    print(f"written: {manifest}\n         {remaining}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

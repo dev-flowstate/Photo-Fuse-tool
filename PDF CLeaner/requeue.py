@@ -1,86 +1,77 @@
 """
-Redo only the papers the split-column fault touched.
+Queue the papers the audit found fault with, so the batch redoes just those.
 
-Detection is text-only and quick, so every paper already finished is
-re-detected twice - once with the fix and once without - and only those
-whose question starts move are thrown away and queued again. Papers that
-came out the same either way keep their images and stay done.
+Deletes their images and drops their rows from the batch log, leaving every
+clean paper alone. Running batch_all.py afterwards picks up exactly the
+papers that were dropped.
 
-    py requeue.py            (report only)
+    py requeue.py            (report what would be redone)
     py requeue.py --apply    (delete those images and drop their log rows)
 """
-import json
-import sys
-from pathlib import Path
-import fitz
 
-sys.path.insert(0, r"e:\Photo Fuse tool\PDF CLeaner")
-import pdfcleaner as pc
+from __future__ import annotations
+
+import argparse
+import json
+from collections import Counter
+from pathlib import Path
 
 OUT = Path(r"D:\Papers\output questions and markschemes")
-LOG = OUT / "_batch_log.jsonl"
-apply = "--apply" in sys.argv
+
+#: Faults that say nothing about the images. A text layer arriving in
+#: fragments only matters if something came of it, and that something would
+#: show up as one of the other faults.
+HARMLESS = {"shredded", "mixed-rotation"}
 
 
-def starts(path: Path) -> list[tuple[int, float, int]]:
-    doc = fitz.open(str(path))
-    try:
-        answers_from = pc.first_answer_table_page(doc)
-        stamps = pc.stamp_rects(doc)
-        bands = pc.header_footer_bands(doc)
-        spans = []
-        for i in range(doc.page_count):
-            page = doc[i]
-            pc.whiten(page, stamps.get(i, ()))
-            pc.strip_furniture(page, bands)
-            spans.append(pc.body_spans(page))
-        searchable = spans if not answers_from else [
-            [] if i < answers_from else sp for i, sp in enumerate(spans)]
-        return [(p, round(y, 1), n) for p, y, n in pc.find_question_starts(searchable)]
-    finally:
-        doc.close()
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="Requeue the papers with faults.")
+    p.add_argument("--out", default=str(OUT))
+    p.add_argument("--apply", action="store_true")
+    a = p.parse_args(argv)
 
+    out = Path(a.out)
+    report = out / "audit.json"
+    if not report.is_file():
+        print(f"No audit to read. Run audit.py first.\n  looked in {report}")
+        return 1
+    rows = json.loads(report.read_text(encoding="utf-8"))
 
-rows = [json.loads(line) for line in LOG.read_text(encoding="utf-8").splitlines()
-        if line.strip()]
-print(f"{len(rows)} papers already finished", flush=True)
+    redo = {row["name"] for row in rows
+            if set(row.get("faults", ())) - HARMLESS}
+    reasons: Counter = Counter(
+        fault for row in rows if row["name"] in redo
+        for fault in set(row.get("faults", ())) - HARMLESS)
 
-fixed = pc._first_part
-affected, kept, failed = [], [], []
-for done, row in enumerate(rows, 1):
-    path = Path(row["paper"])
-    if not path.is_file():
-        failed.append(row["name"])
-        continue
-    try:
-        pc._first_part = lambda raw, column, found, tol: found
-        before = starts(path)
-        pc._first_part = fixed
-        after = starts(path)
-    except Exception as exc:
-        pc._first_part = fixed
-        failed.append(f"{row['name']}: {type(exc).__name__}")
-        continue
-    (affected if before != after else kept).append(row)
-    if done % 25 == 0:
-        print(f"  {done}/{len(rows)} checked, {len(affected)} affected", flush=True)
+    log = out / "_batch_log.jsonl"
+    done = []
+    if log.is_file():
+        done = [json.loads(line)
+                for line in log.read_text(encoding="utf-8").splitlines()
+                if line.strip()]
 
-print(f"\naffected  : {len(affected)}")
-print(f"still good: {len(kept)}")
-if failed:
-    print(f"could not check: {len(failed)}  {failed[:5]}")
-for row in affected[:20]:
-    print(f"   redo {row['name']}")
+    images = [png for png in out.rglob("*.png")
+              if "_q" in png.stem and png.stem.rsplit("_q", 1)[0] in redo]
 
-if not apply:
-    print("\nreport only - pass --apply to delete those images and requeue them")
-    raise SystemExit
+    print(f"{len(redo)} papers to redo, {len(images)} images to remove")
+    print(f"{len(done) - sum(1 for r in done if r['name'] in redo)} papers stay done")
+    for fault, count in reasons.most_common():
+        print(f"   {fault:<16} {count}")
 
-removed = 0
-for row in affected:
-    for png in OUT.glob(f"{row['name']}_q*.png"):
+    if not a.apply:
+        print("\nreport only - pass --apply to clear them for the batch")
+        return 0
+
+    for png in images:
         png.unlink()
-        removed += 1
-LOG.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in kept),
-               encoding="utf-8")
-print(f"\ndeleted {removed} images, {len(kept)} papers remain done")
+    if done:
+        keep = [r for r in done if r["name"] not in redo]
+        log.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n"
+                               for r in keep), encoding="utf-8")
+        print(f"\nlog now holds {len(keep)} finished papers")
+    print(f"removed {len(images)} images - run batch_all.py to rebuild them")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

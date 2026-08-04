@@ -13,6 +13,7 @@ image. Each paper collects zero or more faults:
   pair-mismatch  the paper and its mark scheme disagree on how many
   furniture      a banner or column heading survives onto a body page
   shredded       the text layer arrives in fragments, so labels are unreadable
+  stale          the images on disk predate the current reading of the paper
   mixed-rotation the pages are not all the same way up
 
     py audit.py                    (scan everything, write audit.json)
@@ -137,7 +138,10 @@ def audit(path: Path) -> dict:
 
         searchable = spans if not answers_from else [
             [] if i < answers_from else sp for i, sp in enumerate(spans)]
-        found = pc.find_question_starts(searchable)
+        kind = pc.detect_kind(path, doc)
+        row["kind"] = kind
+        found = (pc.find_questions_ms(searchable) if kind == "ms"
+                 else pc.find_questions_qp(searchable))
         numbers = [n for _, _, n in found]
         row["questions"] = numbers
 
@@ -292,14 +296,22 @@ def main(argv=None) -> int:
     done = 0
     for row in rows:
         cut = []
-        for png in sorted(images.get(row["name"], ())):
-            edge = edge_ink(png)
+        have = sorted(images.get(row["name"], ()))
+        for png in have:
+            edge = edge_ink(png, row.get("kind", ""))
             if edge and max(edge) > 0.5:
                 cut.append([png.name, round(max(edge), 2)])
             done += 1
         if cut:
             row["faults"] = sorted(set(row["faults"]) | {"clipped"})
             row["detail"]["clipped"] = cut[:4]
+        # The images on disk were made by an older run. Where the paper now
+        # reads a different number of questions, whatever is on disk is out
+        # of date whether or not anything else is wrong with it.
+        wanted = len(row.get("questions") or ())
+        if have and wanted and len(have) != wanted:
+            row["faults"] = sorted(set(row["faults"]) | {"stale"})
+            row["detail"]["stale"] = {"on_disk": len(have), "now": wanted}
         if done and done % 2000 == 0:
             print(f"  {done} images checked", flush=True)
 
