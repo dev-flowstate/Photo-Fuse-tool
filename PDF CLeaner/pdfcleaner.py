@@ -621,6 +621,9 @@ def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
 #: "1", and the mark-scheme forms "1(a)", "1(b)(i)", "2(b)(iv)1.", "3(c)(ii)".
 _QUESTION_LABEL = re.compile(r"(\d{1,2})\s*(?:\(.*)?\.?$")
 
+#: A label opens its line - "2", "2.", "2(a)", "2 (b)(ii)".
+_LABEL_START = re.compile(r"^\d{1,2}\s*(?:[.(]|$)")
+
 
 def _question_number(text: str) -> int | None:
     """The question a label belongs to, or None if it is not one."""
@@ -681,7 +684,7 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
         for left, centre, y0, text in spans:
             number = _question_number(text)
             if number is not None:
-                raw.append((left, centre, index, y0, number))
+                raw.append((left, centre, index, y0, number, text))
     if not raw:
         return []
 
@@ -695,18 +698,21 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     for key in (0, 1):
         # (aligning x, left edge, page, y, number) - the left edge travels
         # along so gap filling can use it later.
-        candidates = [(c[key], c[0], c[2], c[3], c[4]) for c in raw]
+        # (aligning x, left, page, y, number, centre) - both edges travel
+        # along, because the gap filling and the snap back to the first part
+        # each need to know where this column really sits.
+        candidates = [(c[key], c[0], c[2], c[3], c[4], c[1]) for c in raw]
 
         # A mark scheme lists every part in its Question column - 1(a),
         # 1(b)(i), 1(b)(ii)... - so the same number recurs many times. Only
         # its first appearance starts a question.
         seen: set[tuple[int, int]] = set()
         unique = []
-        for x, left, index, y0, number in sorted(candidates, key=lambda c: (c[2], c[3])):
-            slot = (round(x / max(1.0, tolerance)), number)
+        for row in sorted(candidates, key=lambda c: (c[2], c[3])):
+            slot = (round(row[0] / max(1.0, tolerance)), row[4])
             if slot not in seen:
                 seen.add(slot)
-                unique.append((x, left, index, y0, number))
+                unique.append(row)
 
         # A question number is printed out in the margin, to the left of
         # everything else on the page. Nothing else here is: the numbers that
@@ -714,7 +720,8 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
         # periodic table, all of them set in from the edge.
         margin = min((c[0] for c in unique), default=0.0) + tolerance
 
-        for seed_x, _, _, _, _ in unique:
+        for row in unique:
+            seed_x = row[0]
             column = [c for c in unique if abs(c[0] - seed_x) <= tolerance]
             column.sort(key=lambda c: (c[2], c[3]))     # reading order
             chain = _longest_run([c[4] for c in column])
@@ -753,7 +760,7 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
             if score > best_score:
                 best_score, best = score, picked
                 best_key, best_x = key, seed_x
-                best_column = [(c[2], c[3], c[4], c[1]) for c in column]
+                best_column = [(c[2], c[3], c[4], c[1], c[5]) for c in column]
 
     if len(best) < 2:
         return []
@@ -798,23 +805,33 @@ def _first_part(raw: list[tuple[float, float, int, float, int]],
     if not found or not column:
         return found
 
-    lefts = [c[3] for c in column]
-    span = (min(lefts) - tolerance, max(lefts) + tolerance)
-    # The centres of the members, so the other alignment is covered too.
-    centres = [c for l, c, _, _, _ in raw if span[0] <= l <= span[1]]
-    middle = ((min(centres) - tolerance, max(centres) + tolerance)
-              if centres else None)
+    # Both bands come from the column's own members, and from the middle of
+    # them rather than the extremes. One member is often a label that ran
+    # into its own wording - "2 The orca, Orcinus orca, ..." - whose centre
+    # lies far across the page; taking the widest pair let the band cover
+    # most of the paper, and a question then snapped onto the subscript 2 of
+    # "4CO2".
+    lefts = sorted(c[3] for c in column)
+    centres = sorted(c[4] for c in column)
+    reach = tolerance * 2                    # labels differ in width
+    mid_left = lefts[len(lefts) // 2]
+    mid_centre = centres[len(centres) // 2]
+    edge = (mid_left - reach, mid_left + reach)
+    middle = (mid_centre - reach, mid_centre + reach)
 
     def in_column(left: float, centre: float) -> bool:
-        return (span[0] <= left <= span[1]
-                or (middle is not None and middle[0] <= centre <= middle[1]))
+        return edge[0] <= left <= edge[1] or middle[0] <= centre <= middle[1]
 
     moved: list[tuple[int, float, int]] = []
     floor = (-1, -1.0)                       # never overtake the question above
     for index, y, number in found:
         best = (index, y)
-        for left, centre, page, y0, n in raw:
+        for left, centre, page, y0, n, text in raw:
             if n != number or not in_column(left, centre):
+                continue
+            # A label opens its line: "2", "2(a)", "2(b)(ii)". A digit buried
+            # in a formula does not, however well it happens to line up.
+            if not _LABEL_START.match(text.strip()):
                 continue
             if (page, y0) < best and (page, y0) > floor:
                 best = (page, y0)

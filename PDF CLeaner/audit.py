@@ -1,0 +1,257 @@
+"""
+Audit every paper and list the ones whose question images are wrong.
+
+Works on the text layer and the cut positions rather than the pictures, so
+it can tell that a question is missing its part (a) without reading the
+image. Each paper collects zero or more faults:
+
+  no-output      nothing was written for it at all
+  missing-part   a question does not begin at its first part
+  foreign-label  a later question's label sits inside this question's range
+  gap            the question numbers are not 1..n
+  pair-mismatch  the paper and its mark scheme disagree on how many
+  furniture      a banner or column heading survives onto a body page
+  shredded       the text layer arrives in fragments, so labels are unreadable
+  mixed-rotation the pages are not all the same way up
+
+    py audit.py                    (scan everything, write audit.json)
+    py audit.py --limit 200        (a quick sample)
+    py audit.py --only 9701        (one syllabus)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pdfcleaner as pc
+
+try:
+    import fitz
+except ImportError:                                  # pragma: no cover
+    import pymupdf as fitz
+
+ROOT = Path(r"D:\Papers\all folders\all folders")
+OUT = Path(r"D:\Papers\output questions and markschemes")
+
+#: "1(a)", "1 (a)", or a bare "(a)" where the number is elsewhere on the line.
+_PART = re.compile(r"^(?:(\d{1,2})\s*)?\(([a-z])\)")
+
+#: Page furniture that should never survive onto a page holding answers.
+_BANNER = re.compile(
+    r"Mark Scheme"
+    r"|Cambridge (?:International|Assessment|University Press)"
+    r"|Question\s+Answer\s+(?:Marks?|Mark)"
+    r"|Page\s+\d+\s+of\s+\d+"
+    r"|PUBLISHED")
+
+#: A column heading can lose some of its words to the sweep and keep the
+#: rest, so a lone "Question" at the head of a page is furniture too.
+_COLUMN_WORDS = {"question", "answer", "answers", "mark", "marks",
+                 "total", "totals", "guidance"}
+
+_NAME = re.compile(r"^(\d{4})_([a-z]\d{2})_(qp|ms)_(\d+)$", re.I)
+
+
+def shredded(doc: "fitz.Document", pages: range) -> bool:
+    """
+    Whether the text comes out in pieces rather than lines.
+
+    Some papers hand back "Question" as "Que" + "estion" and "1(a)(i)" as
+    "1(" + "(a)(i)". Nothing matches a label or a heading, so the question
+    starts late and the header is never removed.
+    """
+    short = total = 0
+    for index in pages:
+        for block in doc[index].get_text("blocks"):
+            body = " ".join(block[4].split())
+            if not any(ch.isalpha() for ch in body):
+                continue
+            total += 1
+            short += len(body) <= 6
+    return total >= 20 and short > total * 0.5
+
+
+def audit(path: Path) -> dict:
+    """Every fault this paper shows, with enough detail to act on."""
+    row: dict = {"name": path.stem, "faults": [], "detail": {}}
+    doc = fitz.open(str(path))
+    try:
+        answers_from = pc.first_answer_table_page(doc)
+        content_end = pc.last_content_page(doc)
+        stamps = pc.stamp_rects(doc)
+        bands = pc.header_footer_bands(doc)
+
+        spans = []
+        for index in range(doc.page_count):
+            page = doc[index]
+            pc.whiten(page, stamps.get(index, ()))
+            pc.strip_furniture(page, bands)
+            spans.append(pc.body_spans(page))
+
+        searchable = spans if not answers_from else [
+            [] if i < answers_from else sp for i, sp in enumerate(spans)]
+        found = pc.find_question_starts(searchable)
+        numbers = [n for _, _, n in found]
+        row["questions"] = numbers
+
+        first = found[0][0] if found else (answers_from or 0)
+        last = max(content_end, (found[-1][0] + 1) if found else 1)
+        body = range(first, min(last, doc.page_count))
+
+        if shredded(doc, body):
+            row["faults"].append("shredded")
+
+        # Only the pages that are actually used. A mark scheme's cover is
+        # portrait while its answers are landscape, which is normal and is
+        # skipped anyway - it is a mix among the body pages that goes wrong.
+        rotations = {doc[i].rotation for i in body}
+        if len(rotations) > 1:
+            row["faults"].append("mixed-rotation")
+            row["detail"]["rotations"] = sorted(rotations)
+
+        if not found:
+            row["faults"].append("no-questions")
+            return row
+        if numbers != list(range(1, len(numbers) + 1)):
+            row["faults"].append("gap")
+
+        # Where the question column sits, taken from the labels actually used.
+        column = []
+        for index, y, number in found:
+            for left, _, y0, text in spans[index]:
+                if abs(y0 - y) < 0.5 and pc._question_number(text) == number:
+                    column.append(left)
+                    break
+        if column:
+            low, high = min(column) - 6.0, max(column) + 6.0
+        else:
+            low, high = 0.0, 0.0
+
+        bounds = [(p, y) for p, y, _ in found] + [(doc.page_count, 0.0)]
+        for i, (index, y, number) in enumerate(found):
+            start, stop = bounds[i], bounds[i + 1]
+            parts, foreign = [], []
+            for page in range(index, min(stop[0] + 1, doc.page_count)):
+                for left, _, y0, text in spans[page]:
+                    if (page, y0) < start or (page, y0) >= stop:
+                        continue
+                    body_text = text.strip()
+                    m = _PART.match(body_text)
+                    if m and (m.group(1) is None or int(m.group(1)) == number):
+                        parts.append(m.group(2))
+                    # Only the very next question counts. Any larger number
+                    # in the column is usually a graph scale - 10, 20, 30 -
+                    # and flagging those buried a real fault in noise.
+                    if low <= left <= high and pc._LABEL_START.match(body_text):
+                        if pc._question_number(body_text) == number + 1:
+                            foreign.append((page + 1, number + 1))
+            # A question opens at (a) or, where the paper numbers its parts
+            # in roman, at (i). Anything else means the range began part way
+            # through - either the question lost its opening parts, or it
+            # started inside the one before it.
+            if parts and parts[0] not in ("a", "i"):
+                row["faults"].append("missing-part")
+                row["detail"].setdefault("missing_part", []).append(
+                    {"question": number, "starts_at": parts[0]})
+            if foreign:
+                row["faults"].append("foreign-label")
+                row["detail"].setdefault("foreign", []).append(
+                    {"question": number, "found": foreign[:3]})
+
+        for index in body:
+            page = doc[index]
+            hit = _BANNER.search(" ".join(page.get_text().split()))
+            note = hit.group(0) if hit else None
+            if note is None:
+                edge = page.rect.height * 0.20
+                for block in page.get_text("blocks"):
+                    shown = pc._as_shown(page, fitz.Rect(*block[:4]))
+                    word = " ".join(block[4].split()).lower().strip(":")
+                    if shown.y0 < edge and word in _COLUMN_WORDS:
+                        note = word
+                        break
+            if note:
+                row["faults"].append("furniture")
+                row["detail"]["furniture"] = {"page": index + 1, "text": note}
+                break
+    except Exception as exc:                          # noqa: BLE001 - reported
+        row["faults"].append("error")
+        row["detail"]["error"] = f"{type(exc).__name__}: {exc}"[:200]
+    finally:
+        doc.close()
+    row["faults"] = sorted(set(row["faults"]))
+    return row
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description="List the papers with bad output.")
+    p.add_argument("--root", default=str(ROOT))
+    p.add_argument("--out", default=str(OUT))
+    p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--only", default="", help="syllabus code, e.g. 9701")
+    a = p.parse_args(argv)
+
+    root, out = Path(a.root), Path(a.out)
+    pdfs = sorted(q for q in root.rglob("*.pdf") if a.only in q.stem)
+    if a.limit:
+        pdfs = pdfs[:a.limit]
+
+    written = {p.stem.rsplit("_q", 1)[0]
+               for p in out.rglob("*.png") if "_q" in p.stem}
+
+    print(f"auditing {len(pdfs)} papers", flush=True)
+    rows, started = [], time.time()
+    for done, path in enumerate(pdfs, 1):
+        row = audit(path)
+        if path.stem not in written:
+            row["faults"] = sorted(set(row["faults"]) | {"no-output"})
+        rows.append(row)
+        if done % 100 == 0:
+            bad = sum(1 for r in rows if r["faults"])
+            rate = (time.time() - started) / done
+            print(f"  {done}/{len(pdfs)}  {bad} with faults  "
+                  f"~{(len(pdfs) - done) * rate / 60:.0f} min left", flush=True)
+
+    # A paper and its mark scheme should agree on how many questions there are.
+    pairs: dict = defaultdict(dict)
+    for row in rows:
+        m = _NAME.match(row["name"])
+        if m:
+            pairs[(m.group(1), m.group(2), m.group(4))][m.group(3).lower()] = row
+    for key, both in pairs.items():
+        if "qp" in both and "ms" in both:
+            a_n, b_n = both["qp"].get("questions"), both["ms"].get("questions")
+            if a_n and b_n and len(a_n) != len(b_n):
+                for side in both.values():
+                    side["faults"] = sorted(set(side["faults"]) | {"pair-mismatch"})
+                    side["detail"]["pair"] = {"qp": len(a_n), "ms": len(b_n)}
+
+    bad = [r for r in rows if r["faults"]]
+    counts: Counter = Counter(f for r in rows for f in r["faults"])
+
+    dest = out / "audit.json"
+    dest.write_text(json.dumps(rows, indent=1), encoding="utf-8")
+    listing = out / "defective papers.txt"
+    with listing.open("w", encoding="utf-8") as fh:
+        fh.write(f"{len(bad)} of {len(rows)} papers need regenerating\n\n")
+        for row in sorted(bad, key=lambda r: r["name"]):
+            fh.write(f"{row['name']:<24} {', '.join(row['faults'])}\n")
+            for key, value in row["detail"].items():
+                fh.write(f"      {key}: {value}\n")
+
+    print(f"\n{len(bad)} of {len(rows)} papers have at least one fault")
+    for fault, count in counts.most_common():
+        print(f"   {fault:<16} {count}")
+    print(f"\nwritten: {listing}\n         {dest}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
