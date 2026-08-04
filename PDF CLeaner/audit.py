@@ -9,6 +9,7 @@ image. Each paper collects zero or more faults:
   missing-part   a question does not begin at its first part
   foreign-label  a later question's label sits inside this question's range
   gap            the question numbers are not 1..n
+  clipped        an image opens or closes mid-line, so a cut split a line
   pair-mismatch  the paper and its mark scheme disagree on how many
   furniture      a banner or column heading survives onto a body page
   shredded       the text layer arrives in fragments, so labels are unreadable
@@ -30,7 +31,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import numpy as np
 import pdfcleaner as pc
+from PIL import Image
 
 try:
     import fitz
@@ -76,6 +79,29 @@ def shredded(doc: "fitz.Document", pages: range) -> bool:
             total += 1
             short += len(body) <= 6
     return total >= 20 and short > total * 0.5
+
+
+def edge_ink(png: Path) -> tuple[float, float] | None:
+    """
+    How much ink the first and last rows carry, against a full line's worth.
+
+    A line sliced through the middle leaves its cross-section along the edge
+    of the image; a line trimmed properly leaves only the tops of its tallest
+    letters. The two differ by an order of magnitude, so this tells a cut
+    apart from a genuinely short question.
+    """
+    try:
+        with Image.open(png) as handle:
+            rows = (np.asarray(handle.convert("L")) < 200).sum(axis=1)
+    except Exception:                                 # noqa: BLE001 - skipped
+        return None
+    inked = np.flatnonzero(rows)
+    if not len(inked):
+        return None
+    line = np.percentile(rows[inked], 90)             # a whole line of text
+    if line <= 0:
+        return None
+    return float(rows[inked[0]] / line), float(rows[inked[-1]] / line)
 
 
 def audit(path: Path) -> dict:
@@ -138,28 +164,44 @@ def audit(path: Path) -> dict:
         for i, (index, y, number) in enumerate(found):
             start, stop = bounds[i], bounds[i + 1]
             parts, foreign = [], []
+            # A couple of points of slack at each end. Spans on one line do
+            # not share a y to the last decimal, and comparing exactly put
+            # the "(a)" that sits beside the question number just outside its
+            # own question - so every such paper read as starting at (b).
+            slack = 2.0
             for page in range(index, min(stop[0] + 1, doc.page_count)):
                 for left, _, y0, text in spans[page]:
-                    if (page, y0) < start or (page, y0) >= stop:
+                    if page == start[0] and y0 < start[1] - slack:
+                        continue
+                    if page == stop[0] and y0 >= stop[1] - slack:
                         continue
                     body_text = text.strip()
-                    m = _PART.match(body_text)
+                    # A part label is set out near the question number. The
+                    # same shape appears mid-line all over a chemistry paper
+                    # as a state symbol - H2O(l), Cl2(g), S(s) - so anything
+                    # away from the margin is not a part.
+                    m = _PART.match(body_text) if left <= high + 40.0 else None
                     if m and (m.group(1) is None or int(m.group(1)) == number):
-                        parts.append(m.group(2))
+                        parts.append((page, y0, m.group(2)))
                     # Only the very next question counts. Any larger number
                     # in the column is usually a graph scale - 10, 20, 30 -
                     # and flagging those buried a real fault in noise.
                     if low <= left <= high and pc._LABEL_START.match(body_text):
                         if pc._question_number(body_text) == number + 1:
                             foreign.append((page + 1, number + 1))
+            # Reading order, not the order the spans happen to come out in -
+            # taking the first span as the first part reported whole, correct
+            # questions as starting at (b).
+            #
             # A question opens at (a) or, where the paper numbers its parts
             # in roman, at (i). Anything else means the range began part way
             # through - either the question lost its opening parts, or it
             # started inside the one before it.
-            if parts and parts[0] not in ("a", "i"):
+            parts.sort()
+            if parts and parts[0][2] not in ("a", "i"):
                 row["faults"].append("missing-part")
                 row["detail"].setdefault("missing_part", []).append(
-                    {"question": number, "starts_at": parts[0]})
+                    {"question": number, "starts_at": parts[0][2]})
             if foreign:
                 row["faults"].append("foreign-label")
                 row["detail"].setdefault("foreign", []).append(
@@ -218,6 +260,34 @@ def main(argv=None) -> int:
             rate = (time.time() - started) / done
             print(f"  {done}/{len(pdfs)}  {bad} with faults  "
                   f"~{(len(pdfs) - done) * rate / 60:.0f} min left", flush=True)
+
+    # Where a cut landed inside a line of text, the image opens or closes on
+    # a horizontal slice through the letters. Its first row then carries as
+    # much ink as a whole line does, where a properly trimmed image starts
+    # on the ascenders alone and carries almost none.
+    #
+    # Height cannot be used for this. A maths paper asks whole questions in
+    # one line - "Solve the inequality |2x + 3| > 3|x + 2|. [4]" - and those
+    # are short and perfectly correct.
+    images: dict = defaultdict(list)
+    for png in out.rglob("*.png"):
+        if "_q" in png.stem:
+            images[png.stem.rsplit("_q", 1)[0]].append(png)
+
+    print("\nchecking the images for cuts through a line", flush=True)
+    done = 0
+    for row in rows:
+        cut = []
+        for png in sorted(images.get(row["name"], ())):
+            edge = edge_ink(png)
+            if edge and max(edge) > 0.5:
+                cut.append([png.name, round(max(edge), 2)])
+            done += 1
+        if cut:
+            row["faults"] = sorted(set(row["faults"]) | {"clipped"})
+            row["detail"]["clipped"] = cut[:4]
+        if done and done % 2000 == 0:
+            print(f"  {done} images checked", flush=True)
 
     # A paper and its mark scheme should agree on how many questions there are.
     pairs: dict = defaultdict(dict)
