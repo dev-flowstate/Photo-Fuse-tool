@@ -69,17 +69,27 @@ def main(argv=None) -> int:
         print("\nreport only - pass --apply to move them and write the manifest")
         return 0
 
-    moved = 0
-    for row, held in clean:
-        where = "markschemes_clean" if row["name"].find("_ms_") >= 0 else "questions_clean"
-        dest = out / where
-        dest.mkdir(exist_ok=True)
-        for png in held:
-            target = dest / png.name
-            if target.exists():
-                target.unlink()
-            shutil.move(str(png), str(target))
-            moved += 1
+    def file_away(group, suffix) -> int:
+        moved = 0
+        for row, held in group:
+            kind = "markschemes" if "_ms_" in row["name"] else "questions"
+            dest = out / f"{kind}_{suffix}"
+            dest.mkdir(exist_ok=True)
+            for png in held:
+                target = dest / png.name
+                if target.resolve() == png.resolve():
+                    continue
+                if target.exists():
+                    target.unlink()
+                shutil.move(str(png), str(target))
+                moved += 1
+        return moved
+
+    # Both sets are filed, so nothing is left lying between the folders a
+    # rebuild wrote to and the ones an earlier run used. Held-back images are
+    # moved, never deleted.
+    moved = file_away(clean, "clean")
+    file_away(dirty, "review")
 
     manifest = out / "clean questions.txt"
     with manifest.open("w", encoding="utf-8") as fh:
@@ -102,9 +112,12 @@ def main(argv=None) -> int:
             faults = ", ".join(sorted(set(row["faults"]) - HARMLESS))
             fh.write(f"{row['name']:<24} {faults}\n")
 
-    print(f"\nmoved {moved} images")
-    print(f"  {out / 'questions_clean'}")
-    print(f"  {out / 'markschemes_clean'}")
+    print(f"\n{moved} images filed as clean")
+    for folder in ("questions_clean", "markschemes_clean",
+                   "questions_review", "markschemes_review"):
+        here = out / folder
+        if here.is_dir():
+            print(f"  {folder:<20} {len(list(here.glob('*.png')))} images")
     print(f"written: {manifest}\n         {remaining}")
     return 0
 
