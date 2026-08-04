@@ -773,7 +773,54 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     # own start was never found simply stays joined to the one before it.
     filled = _fill_gaps(pages, best_column, best_key, best_x, tolerance)
     chain = _longest_increasing([n for _, _, n in filled])
-    return [filled[i] for i in chain]
+    return _first_part(raw, best_column, [filled[i] for i in chain], tolerance)
+
+
+def _first_part(raw: list[tuple[float, float, int, float, int]],
+                column: list[tuple[int, float, int, float]],
+                found: list[tuple[int, float, int]],
+                tolerance: float) -> list[tuple[int, float, int]]:
+    """
+    Move each question back to the first part that carries its number.
+
+    A mark scheme lists every part in its Question column - 1(a), 1(b),
+    1(d)(i) - centred, so they share a centre but not a left edge: "1(a)"
+    starts at 81.6 where "1(d)(i)" starts at 76.7. Clustering by left edge
+    splits one real column in two, and the half holding the longer labels
+    wins on pages spanned, precisely because starting each question later
+    pushes it onto a later page.
+
+    The column choice is left alone - it reads the right numbers either way -
+    but a question has to begin at its first part. Otherwise question 1 opened
+    at 1(d)(i), everything from 1(a) to 1(c) was dropped as being above the
+    first question, and 2(a) was left on the end of question 1.
+    """
+    if not found or not column:
+        return found
+
+    lefts = [c[3] for c in column]
+    span = (min(lefts) - tolerance, max(lefts) + tolerance)
+    # The centres of the members, so the other alignment is covered too.
+    centres = [c for l, c, _, _, _ in raw if span[0] <= l <= span[1]]
+    middle = ((min(centres) - tolerance, max(centres) + tolerance)
+              if centres else None)
+
+    def in_column(left: float, centre: float) -> bool:
+        return (span[0] <= left <= span[1]
+                or (middle is not None and middle[0] <= centre <= middle[1]))
+
+    moved: list[tuple[int, float, int]] = []
+    floor = (-1, -1.0)                       # never overtake the question above
+    for index, y, number in found:
+        best = (index, y)
+        for left, centre, page, y0, n in raw:
+            if n != number or not in_column(left, centre):
+                continue
+            if (page, y0) < best and (page, y0) > floor:
+                best = (page, y0)
+        moved.append((best[0], best[1], number))
+        floor = best
+    return moved
 
 
 def _longest_increasing(numbers: list[int]) -> list[int]:
@@ -885,8 +932,14 @@ def clean_page(img: Image.Image, s: CleanSettings,
     if s.remove_answer_lines:
         img = pf.remove_answer_lines(img, fs)      # same size, marks unmoved
 
-    left, top, right, bottom = pf.trim_box(img, fs)
-    img = img.crop((left, top, right, bottom))
+    # Only the top and bottom are trimmed here. Cropping each page to its own
+    # left edge as well made the indentation jump wherever two pages joined -
+    # a part that starts halfway across the page came out hard against the
+    # margin because that page happened to have nothing further left. The
+    # sides are trimmed once, off the finished strip, so every page keeps the
+    # same frame of reference.
+    _, top, _, bottom = pf.trim_box(img, fs)
+    img = img.crop((0, top, img.width, bottom))
     rows = [r - top for r in rows]
 
     if s.collapse_gaps:
@@ -913,7 +966,12 @@ def clean_page(img: Image.Image, s: CleanSettings,
 # --------------------------------------------------------------------------
 
 def reflow(pages: Sequence[Image.Image], s: CleanSettings) -> Image.Image:
-    """Stack the cleaned pages into one continuous strip, left-aligned."""
+    """
+    Stack the cleaned pages into one continuous strip, left-aligned.
+
+    The side margins come off here rather than page by page, so a part that
+    is indented stays indented no matter which page it landed on.
+    """
     if not pages:
         raise ValueError("Nothing left after cleaning - every page looked blank.")
 
@@ -926,6 +984,10 @@ def reflow(pages: Sequence[Image.Image], s: CleanSettings) -> Image.Image:
     for p in pages:
         strip.paste(p, (0, y))
         y += p.height + gap
+
+    columns = np.flatnonzero(pf._ink_mask(strip, s.ink_threshold).any(axis=0))
+    if len(columns):
+        strip = strip.crop((int(columns[0]), 0, int(columns[-1]) + 1, strip.height))
     return strip
 
 
