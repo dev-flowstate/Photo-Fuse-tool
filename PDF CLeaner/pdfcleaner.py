@@ -109,6 +109,29 @@ class CleanSettings:
     question_margin_pt: float = 6.0      # white border on those PNGs
     save_pdf: bool = True                # False = question PNGs only, no PDF
 
+    # Which kind of document this is: "qp" a question paper, "ms" a mark
+    # scheme, "" work it out. The two are laid out nothing alike and used to
+    # be told apart by sniffing each page, so a wrong guess in one place
+    # spoiled decisions elsewhere. It is settled once now, and everything
+    # below reads from it.
+    kind: str = ""
+
+    # A question paper numbers its questions down the left margin of flowing
+    # text; a mark scheme lists every part in the Question column of a ruled
+    # table. Only the second has rules to cut on - on the first the test can
+    # only ever match something that is not a rule, and a line of dense maths
+    # was being cut through the middle.
+    cut_on_rules: bool = False
+
+    # A question paper opens with an instruction line that belongs to
+    # question 1. A mark scheme opens with its abbreviations table, which
+    # belongs to nothing.
+    keep_above_first: bool = True
+
+    # Reference and administrative pages follow the last question of a
+    # question paper. A mark scheme simply ends.
+    trim_end_matter: bool = True
+
     def fuse_settings(self) -> pf.Settings:
         """Translate into the Photo Fuse settings object, in pixels."""
         scale = self.dpi / PT_PER_INCH
@@ -124,6 +147,65 @@ class CleanSettings:
             trim=True,
             trim_padding=max(2, round(2 * scale)),
         )
+
+
+# --------------------------------------------------------------------------
+# The two setups
+# --------------------------------------------------------------------------
+
+#: A question paper: numbers down the left margin, dotted answer rulings to
+#: erase, an instruction line above question 1, and reference pages after the
+#: last question.
+QUESTION_PAPER = dict(
+    kind="qp",
+    cut_on_rules=False,
+    keep_above_first=True,
+    trim_end_matter=True,
+    remove_answer_lines=True,
+)
+
+#: A mark scheme: a ruled answer table, its own repeated column heading, and
+#: no dotted rulings at all - so the pass that erases them has nothing to find
+#: and can only take real content. Measured over four mark schemes it removed
+#: 0.00% of the ink on three and 0.38% on the fourth, all of it answer.
+MARK_SCHEME = dict(
+    kind="ms",
+    cut_on_rules=True,
+    keep_above_first=False,
+    trim_end_matter=False,
+    remove_answer_lines=False,
+)
+
+#: Cambridge names every paper <syllabus>_<session>_<qp|ms>_<variant>.
+_KIND_IN_NAME = re.compile(r"_(qp|ms)_", re.I)
+
+
+def detect_kind(src: Path, doc: "fitz.Document") -> str:
+    """
+    Whether this is a question paper or a mark scheme.
+
+    The filename says so on every paper Cambridge publishes. Where it does
+    not, a mark scheme is the one with an answer table in it.
+    """
+    match = _KIND_IN_NAME.search(Path(src).stem)
+    if match:
+        return match.group(1).lower()
+    return "ms" if first_answer_table_page(doc) is not None else "qp"
+
+
+def profile_for(kind: str, base: CleanSettings) -> CleanSettings:
+    """
+    `base` with the settings this kind of document needs.
+
+    Anything the caller set by hand on `base` is left alone - the profile
+    only fills in what is still at its default, so the GUI and the command
+    line can still override any of it.
+    """
+    wanted = MARK_SCHEME if kind == "ms" else QUESTION_PAPER
+    blank = CleanSettings()
+    changes = {name: value for name, value in wanted.items()
+               if getattr(base, name) == getattr(blank, name)}
+    return replace(base, **changes) if changes else base
 
 
 # --------------------------------------------------------------------------
@@ -328,10 +410,16 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     # printed again mid-page. Anywhere it appears it is furniture, so the test
     # is on the words alone - every one of them has to be a column name, and
     # there have to be at least two, so a lone answer of "Total" survives.
+    #
+    # Up in the header band one word is enough, because some papers hand the
+    # heading back as three separate blocks - "Question", "Answer", "Mark" -
+    # and none of them then reached two words. The heading's ruled box was
+    # left behind as an empty row at the top of a question.
     words = body.lower().replace("/", " ").split()
     columns = {"question", "answer", "answers", "mark", "marks", "total",
                "totals", "guidance", "notes", "part", "additional"}
-    if len(words) >= 2 and all(word in columns for word in words):
+    enough = 1 if rect.y1 < page_rect.height * 0.20 else 2
+    if len(words) >= enough and all(word in columns for word in words):
         return True
 
     # The copyright notice on the final page. These phrases never turn up in
@@ -572,14 +660,12 @@ def strip_furniture(page: "fitz.Page",
     shown = page.rect
     band = shown.height * 0.16
 
-    borrowed = []
     head, foot = bands or (0.0, 0.0)
-    if head and not any(r.y1 < band for r in rects):
-        borrowed.append(fitz.Rect(shown.x0, shown.y0, shown.x1, head + 2.0))
-    if foot and not any(r.y0 > shown.height - band for r in rects):
-        borrowed.append(fitz.Rect(shown.x0, foot - 2.0, shown.x1, shown.y1))
+    deeper = head > max((r.y1 for r in rects if r.y1 < band), default=0.0)
+    higher = bool(foot) and foot < min(
+        (r.y0 for r in rects if r.y0 > shown.height - band), default=shown.height)
 
-    if not rects and tail is None and not borrowed:
+    if not rects and tail is None and not (deeper or higher):
         return
 
     # Where the real content starts and ends, so a header can be swept from
@@ -600,6 +686,19 @@ def strip_furniture(page: "fitz.Page",
             and b[4].strip()]
     content_top = min((r.y0 for r in keep if r.y0 >= head_end), default=shown.height)
     content_bottom = max((r.y1 for r in keep if r.y1 <= foot_start), default=0.0)
+
+    # What the rest of the document agrees its header and footer measure, as a
+    # floor rather than a fallback: a page that recognises its banner but not
+    # the column heading below it would otherwise sweep only as far as the
+    # banner and leave the heading standing. Held back by the content line
+    # like every other sweep, or a page whose question starts high loses it.
+    borrowed = []
+    if deeper:
+        borrowed.append(fitz.Rect(shown.x0, shown.y0, shown.x1,
+                                  min(head + 2.0, content_top)))
+    if higher:
+        borrowed.append(fitz.Rect(shown.x0, max(foot - 2.0, content_bottom),
+                                  shown.x1, shown.y1))
 
     # Stop a few points short of the content. The rule under a column heading
     # is also the rule over the first answer, and sweeping right up to the
@@ -730,8 +829,35 @@ def _longest_run(numbers: list[int]) -> list[int]:
     return chain[::-1]
 
 
+def find_questions_qp(pages, tolerance: float = 4.0):
+    """
+    Where each question begins on a question paper.
+
+    The numbers run down the left margin of flowing text, one to a question,
+    and the parts - "(a)", "(i)" - are indented underneath in the body rather
+    than listed beside the number. So there is nothing to snap back to: the
+    first place a number appears is where its question starts.
+    """
+    return find_question_starts(pages, tolerance, snap_to_part=False)
+
+
+def find_questions_ms(pages, tolerance: float = 4.0):
+    """
+    Where each question begins on a mark scheme.
+
+    Every part is listed in the Question column - 1(a), 1(b), 1(d)(i) - and
+    the column is centred, so parts of one question share a centre but not a
+    left edge. Clustering can therefore split one real column in two and pick
+    the half holding the longer labels, which would open each question
+    several parts in. The result is snapped back to the first part carrying
+    the number.
+    """
+    return find_question_starts(pages, tolerance, snap_to_part=True)
+
+
 def find_question_starts(pages: list[list[tuple[float, float, str]]],
-                         tolerance: float = 4.0) -> list[tuple[int, float, int]]:
+                         tolerance: float = 4.0,
+                         snap_to_part: bool = True) -> list[tuple[int, float, int]]:
     """
     Locate where each question begins.
 
@@ -742,6 +868,9 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     graph's axis caption is often further left still, which is exactly what
     used to break Biology papers - every column containing bare numbers is
     considered, and the one whose numbers count 1, 2, 3... furthest wins.
+
+    Prefer `find_questions_qp` or `find_questions_ms`, which set the parts of
+    this that differ between the two.
     """
     raw = []
     for index, spans in enumerate(pages):
@@ -844,7 +973,10 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     # own start was never found simply stays joined to the one before it.
     filled = _fill_gaps(pages, best_column, best_key, best_x, tolerance)
     chain = _longest_increasing([n for _, _, n in filled])
-    return _first_part(raw, best_column, [filled[i] for i in chain], tolerance)
+    picked = [filled[i] for i in chain]
+    if not snap_to_part:
+        return picked
+    return _first_part(raw, best_column, picked, tolerance)
 
 
 def _first_part(raw: list[tuple[float, float, int, float, int]],
@@ -1103,6 +1235,12 @@ def paginate(strip: Image.Image, page_height_px: int, s: CleanSettings) -> list[
     return slices
 
 
+def _unbroken(row: "np.ndarray") -> int:
+    """The longest run of ink along one row, in pixels."""
+    edges = np.flatnonzero(np.diff(np.concatenate(([0], row.view(np.int8), [0]))))
+    return int((edges[1::2] - edges[::2]).max()) if len(edges) else 0
+
+
 def split_questions(strip: Image.Image, marks: Sequence[tuple[int, int]],
                     out_dir: Path, stem: str, s: CleanSettings,
                     keep_head: bool = True) -> list[Path]:
@@ -1123,7 +1261,8 @@ def split_questions(strip: Image.Image, marks: Sequence[tuple[int, int]],
 
     height = strip.height
     scale = s.dpi / PT_PER_INCH
-    ink_per_row = pf._ink_mask(strip, s.ink_threshold).sum(axis=1)
+    ink = pf._ink_mask(strip, s.ink_threshold)
+    ink_per_row = ink.sum(axis=1)
     blank = ink_per_row == 0
     # A mark scheme's table has unbroken vertical borders, so no row inside it
     # is ever truly blank - every row carries those few border pixels, and that
@@ -1136,9 +1275,23 @@ def split_questions(strip: Image.Image, marks: Sequence[tuple[int, int]],
     seam = ink_per_row <= max(2, round(floor * 1.5))
     # The rule between two table rows is where a mark scheme really divides,
     # and it is nearly solid ink, so neither test above will ever take it.
-    divider = ink_per_row >= strip.width * 0.5
-    # ... but a wide black picture looks the same one row at a time, so only a
-    # thin run counts as a rule.
+    #
+    # It has to be an unbroken run of ink, not merely a lot of it. A line of
+    # dense maths reaches 0.56 of the width where a real rule reaches 1.0, so
+    # counting ink alone mistook a line of text for a rule and cut through the
+    # middle of it. A word is the longest unbroken thing text ever draws.
+    #
+    # A question paper has no such table, so there is nothing here for it to
+    # find and the test is off - that removes the failure rather than tuning
+    # around it.
+    if s.cut_on_rules:
+        divider = np.array([_unbroken(ink[y]) >= strip.width * 0.5
+                            if ink_per_row[y] >= strip.width * 0.35 else False
+                            for y in range(height)])
+    else:
+        divider = np.zeros(height, dtype=bool)
+    # A wide black picture looks the same one row at a time, so only a thin
+    # run counts as a rule.
     rule_max = max(2, round(6 * scale))
     # Reach well above the label. A question's first row can carry taller ink
     # than the number itself - the numerator of a fraction rides above it - and
@@ -1313,7 +1466,12 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
         # Read before stripping: the answer-table heading is itself furniture,
         # and so is the "BLANK PAGE" that marks the end of the paper.
         answers_from = first_answer_table_page(doc)
-        content_end = last_content_page(doc)
+        # Settle what kind of document this is once, and work from that
+        # setup for the rest of the run. Deciding it page by page is what
+        # let one kind's rules misfire on the other.
+        s = profile_for(s.kind or detect_kind(src, doc), s)
+
+        content_end = last_content_page(doc) if s.trim_end_matter else doc.page_count
         stamps = stamp_rects(doc)
         bands = header_footer_bands(doc) if s.strip_furniture else None
 
@@ -1332,7 +1490,8 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
             searchable = [[] if i < answers_from else spans
                           for i, spans in enumerate(all_spans)]
 
-        found = find_question_starts(searchable)
+        found = (find_questions_ms(searchable) if s.kind == "ms"
+                 else find_questions_qp(searchable))
 
         if s.pages.strip():
             wanted = parse_pages(s.pages, doc.page_count)
@@ -1424,7 +1583,7 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
             progress(len(wanted) + 1, len(wanted) + 1, "Saving each question")
         questions_dir = dst.parent / f"{src.stem}_questions"
         questions = split_questions(strip, strip_marks, questions_dir, src.stem, s,
-                                    keep_head=not answers_from)
+                                    keep_head=s.keep_above_first)
 
     return Result(
         path=dst,

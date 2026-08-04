@@ -81,7 +81,7 @@ def shredded(doc: "fitz.Document", pages: range) -> bool:
     return total >= 20 and short > total * 0.5
 
 
-def edge_ink(png: Path) -> tuple[float, float] | None:
+def edge_ink(png: Path, kind: str = "") -> tuple[float, float] | None:
     """
     How much ink the first and last rows carry, against a full line's worth.
 
@@ -89,19 +89,33 @@ def edge_ink(png: Path) -> tuple[float, float] | None:
     of the image; a line trimmed properly leaves only the tops of its tallest
     letters. The two differ by an order of magnitude, so this tells a cut
     apart from a genuinely short question.
+
+    On a mark scheme an unbroken rule at the edge is the table boxing the
+    question in, and is right. A question paper has no such table, so a solid
+    line at its edge is a diagram cut in half - which is why the exemption
+    only applies to one of them.
     """
+    if not kind:
+        kind = "ms" if "_ms_" in png.stem else "qp"
     try:
         with Image.open(png) as handle:
-            rows = (np.asarray(handle.convert("L")) < 200).sum(axis=1)
+            mask = np.asarray(handle.convert("L")) < 200
     except Exception:                                 # noqa: BLE001 - skipped
         return None
+    rows = mask.sum(axis=1)
     inked = np.flatnonzero(rows)
     if not len(inked):
         return None
     line = np.percentile(rows[inked], 90)             # a whole line of text
     if line <= 0:
         return None
-    return float(rows[inked[0]] / line), float(rows[inked[-1]] / line)
+
+    def measure(y: int) -> float:
+        if kind == "ms" and pc._unbroken(mask[y]) >= mask.shape[1] * 0.5:
+            return 0.0
+        return float(rows[y] / line)
+
+    return measure(inked[0]), measure(inked[-1])
 
 
 def audit(path: Path) -> dict:
