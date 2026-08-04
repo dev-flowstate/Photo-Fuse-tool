@@ -159,6 +159,42 @@ _AWARDING = re.compile(r"Cambridge\s+(?:International|Assessment|University\s+Pr
 #: "Page 9 of 13", printed in the footer of every mark scheme.
 _PAGE_OF = re.compile(r"\bPage\s+\d+\s+of\s+\d+\b", re.I)
 
+#: What a paper prints after its last question: the data pages, the spare
+#: lined pages and the copyright notice. None of it belongs to a question.
+_END_MATTER = re.compile(
+    r"The Periodic Table of Elements"
+    r"|Permission to reproduce items"
+    r"|Copyright Acknowledgements Booklet"
+    r"|BLANK PAGE"
+    r"|Additional Page"
+    r"|DATA BOOKLET",
+    re.I)
+
+#: Reference material printed under the last question rather than on a page
+#: of its own, so it has to be cut out of the page instead of skipped.
+_TAIL_MATTER = re.compile(
+    r"Important values,? constants and standards"
+    r"|The Periodic Table of Elements",
+    re.I)
+
+
+def last_content_page(doc: "fitz.Document") -> int:
+    """
+    One past the last page that can belong to a question.
+
+    The final question runs to the end of the paper, so without this it
+    swallows whatever follows it - and what follows a chemistry paper is the
+    Periodic Table, printed sideways across a whole page.
+
+    Only an unbroken run at the very end is trimmed, and the text has to be
+    read before the furniture is stripped, since "BLANK PAGE" is furniture
+    itself and would be gone by then.
+    """
+    end = doc.page_count
+    while end > 1 and _END_MATTER.search(doc[end - 1].get_text()):
+        end -= 1
+    return end
+
 
 def first_answer_table_page(doc: "fitz.Document") -> int | None:
     """
@@ -332,6 +368,21 @@ def furniture_rects(page: "fitz.Page") -> list["fitz.Rect"]:
     return found
 
 
+def tail_matter_top(page: "fitz.Page") -> float | None:
+    """
+    Where the data sheet begins on this page, if it does.
+
+    A chemistry paper prints its table of constants directly under the last
+    question's total, on the same page, so it cannot be dropped a page at a
+    time. Everything from that heading to the foot of the page is reference
+    material and belongs to no question.
+    """
+    tops = [_as_shown(page, fitz.Rect(b[0], b[1], b[2], b[3])).y0
+            for b in page.get_text("blocks")
+            if _TAIL_MATTER.search(" ".join(b[4].split()))]
+    return min(tops) if tops else None
+
+
 def strip_furniture(page: "fitz.Page") -> None:
     """
     Blank the headers, footers and margin bars on this page.
@@ -346,7 +397,8 @@ def strip_furniture(page: "fitz.Page") -> None:
     back out of display coordinates before being applied.
     """
     rects = furniture_rects(page)
-    if not rects:
+    tail = tail_matter_top(page)
+    if not rects and tail is None:
         return
 
     shown = page.rect
@@ -403,6 +455,9 @@ def strip_furniture(page: "fitz.Page") -> None:
             # widening that one blanked the whole page.
             rect = fitz.Rect(shown.x0, rect.y0 - 2.0, shown.x1, rect.y1 + 2.0)
         widened.append(rect)
+
+    if tail is not None:
+        widened.append(fitz.Rect(shown.x0, tail - 2.0, shown.x1, shown.y1))
 
     back = ~page.rotation_matrix if getattr(page, "rotation", 0) else None
     for rect in widened:
@@ -1003,8 +1058,10 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
         # two things at once: where each question begins, and where the front
         # matter ends - so the page range no longer rests on spotting dotted
         # answer rulings, which some papers draw differently.
-        # Read before stripping: the answer-table heading is itself furniture.
+        # Read before stripping: the answer-table heading is itself furniture,
+        # and so is the "BLANK PAGE" that marks the end of the paper.
         answers_from = first_answer_table_page(doc)
+        content_end = last_content_page(doc)
 
         all_spans = []
         for index in range(doc.page_count):
@@ -1024,11 +1081,14 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
 
         if s.pages.strip():
             wanted = parse_pages(s.pages, doc.page_count)
-        elif s.skip_front_matter:
-            start = found[0][0] if found else first_question_page(doc)
-            wanted = list(range(start, doc.page_count))
         else:
-            wanted = list(range(doc.page_count))
+            # Never trim away a page a question actually starts on, however
+            # the end of the paper reads.
+            stop = max(content_end, (found[-1][0] + 1) if found else 1)
+            start = 0
+            if s.skip_front_matter:
+                start = found[0][0] if found else first_question_page(doc)
+            wanted = list(range(start, max(stop, start + 1)))
 
         first = doc[wanted[0]]
         page_w_pt, page_h_pt = first.rect.width, first.rect.height
