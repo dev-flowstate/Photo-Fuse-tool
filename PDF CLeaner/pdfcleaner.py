@@ -217,7 +217,7 @@ def first_answer_table_page(doc: "fitz.Document") -> int | None:
     Read before the furniture is stripped, since the heading is furniture.
     """
     for index in range(doc.page_count):
-        if _ANSWER_TABLE.search(" ".join(doc[index].get_text("text").split())):
+        if _ANSWER_TABLE.search(mended_text(doc[index])):
             return index
     return None
 
@@ -364,15 +364,85 @@ def _as_shown(page: "fitz.Page", rect: "fitz.Rect") -> "fitz.Rect":
     return (rect * page.rotation_matrix) if rotation else rect
 
 
+def _stitch(a: str, b: str) -> str | None:
+    """
+    Join two pieces of a broken word, dropping the part they repeat.
+
+    Some papers hand their text back in overlapping pieces - "Que" and
+    "estion", "Ma" and "arks", "1(" and "(a)(ii)". Where the pieces meet they
+    repeat the characters in between, so the repeat comes out and the word
+    goes back together.
+
+    None means they share nothing, so they were never one word - two pieces
+    that merely happen to sit close on the page stay apart.
+    """
+    for size in range(min(len(a), len(b)), 0, -1):
+        if a.endswith(b[:size]):
+            return a + b[size:]
+    return None
+
+
+def _mend(pieces: list) -> list:
+    """Put one line's broken words back together, left to right."""
+    out: list[list] = []
+    for rect, text in sorted(pieces, key=lambda p: p[0].x0):
+        if out and rect.x0 < out[-1][0].x1 - 0.5:      # they overlap on the page
+            joined = _stitch(out[-1][1], text)
+            if joined is not None:
+                out[-1][0] = out[-1][0] | rect
+                out[-1][1] = joined
+                continue
+        out.append([fitz.Rect(rect), text])
+    return out
+
+
+def mended_lines(page: "fitz.Page",
+                 blocks: bool = False) -> list[tuple["fitz.Rect", str]]:
+    """
+    The page's text with any broken words repaired, as (rect, text).
+
+    A shredded page is unreadable to every test here at once: no piece reads
+    as a header, as a column heading, or as a question label, so the banner
+    survives into the middle of a question and the question starts several
+    parts in. Repairing the words first lets all three work as they do on a
+    page that came out whole.
+
+    `blocks` reads whole blocks rather than spans, which is what the
+    furniture tests want.
+    """
+    lines: dict[int, list] = defaultdict(list)
+    if blocks:
+        for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
+            body = " ".join(text.split())
+            if body:
+                box = _as_shown(page, fitz.Rect(x0, y0, x1, y1))
+                lines[round(box.y0 / 3.0)].append((box, body))
+    else:
+        for block in page.get_text("dict")["blocks"]:
+            for line in block.get("lines", []):
+                for span in line["spans"]:
+                    body = span["text"].strip()
+                    if not body:
+                        continue
+                    box = _as_shown(page, fitz.Rect(*span["bbox"]))
+                    lines[round(box.y0 / 3.0)].append((box, body))
+
+    out = []
+    for key in sorted(lines):
+        out += [(rect, text) for rect, text in _mend(lines[key])]
+    return out
+
+
+def mended_text(page: "fitz.Page") -> str:
+    """The whole page as one string, with broken words repaired."""
+    return " ".join(text for _, text in mended_lines(page, blocks=True))
+
+
 def furniture_rects(page: "fitz.Page") -> list["fitz.Rect"]:
     """Headers, footers and margin bars, in the coordinates the page shows."""
     shown = page.rect
-    found = []
-    for x0, y0, x1, y1, text, *_ in page.get_text("blocks"):
-        rect = _as_shown(page, fitz.Rect(x0, y0, x1, y1))
-        if _is_furniture(text, rect, shown):
-            found.append(rect)
-    return found
+    return [rect for rect, text in mended_lines(page, blocks=True)
+            if _is_furniture(text, rect, shown)]
 
 
 def stamp_rects(doc: "fitz.Document") -> dict[int, list["fitz.Rect"]]:
@@ -606,15 +676,9 @@ def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
     # number that survives.
     top = shown.height * 0.02
     bottom = shown.height * 0.98
-    for block in page.get_text("dict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line["spans"]:
-                text = span["text"].strip()
-                if not text:
-                    continue
-                box = _as_shown(page, fitz.Rect(*span["bbox"]))
-                if top < box.y0 < bottom:
-                    out.append((box.x0, (box.x0 + box.x1) / 2, box.y0, text))
+    for box, text in mended_lines(page):
+        if top < box.y0 < bottom:
+            out.append((box.x0, (box.x0 + box.x1) / 2, box.y0, text))
     return out
 
 
