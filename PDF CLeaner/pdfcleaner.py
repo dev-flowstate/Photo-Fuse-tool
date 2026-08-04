@@ -171,11 +171,17 @@ _END_MATTER = re.compile(
     r"|DATA BOOKLET",
     re.I)
 
-#: Reference material printed under the last question rather than on a page
-#: of its own, so it has to be cut out of the page instead of skipped.
+#: Reference material and the closing notices, printed under the last
+#: question rather than on a page of their own, so they have to be cut out of
+#: the page instead of skipped. Every one of these is boilerplate that cannot
+#: appear inside a question.
 _TAIL_MATTER = re.compile(
     r"Important values,? constants and standards"
-    r"|The Periodic Table of Elements",
+    r"|The Periodic Table of Elements"
+    r"|Permission to reproduce items"
+    r"|Copyright Acknowledgements"
+    r"|To avoid the issue of disclosure of answer-related information"
+    r"|The boundaries and names shown, the designations used",
     re.I)
 
 
