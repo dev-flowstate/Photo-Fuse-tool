@@ -41,6 +41,13 @@ try:
 except ImportError:
     sys.exit("Missing dependencies. Run:  py -m pip install -r requirements.txt")
 
+# Pillow refuses to build an image over about 179 million pixels, on the
+# reasoning that a file claiming to be that big is probably an attack. Here
+# the size is ours, not the file's: an A3 paper rendered at 400 dpi comes to
+# 214 million pixels quite legitimately, and 9701_w16_qp_42 failed outright
+# on it. The ceiling is raised to cover A3 at 600 dpi and no further.
+Image.MAX_IMAGE_PIXELS = 500_000_000
+
 # PyMuPDF answers to two names: "pymupdf" since 1.24, "fitz" before that and
 # still shipped as an alias. Some installs only carry one, so try both.
 try:
