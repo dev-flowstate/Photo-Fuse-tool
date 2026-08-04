@@ -24,6 +24,7 @@ import io
 import re
 import sys
 import unicodedata
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
@@ -368,6 +369,94 @@ def furniture_rects(page: "fitz.Page") -> list["fitz.Rect"]:
     return found
 
 
+def stamp_rects(doc: "fitz.Document") -> dict[int, list["fitz.Rect"]]:
+    """
+    Where a download site has branded the pages, page by page.
+
+    Copies of these papers circulate with a site's logo stamped in the same
+    spot on every page. A figure never repeats in one place page after page,
+    so a small image that does is a stamp. On most papers it sits below the
+    crop and is never seen; on a few it straddles the crop line and leaves a
+    slice of itself along the bottom of a question.
+    """
+    counts: Counter = Counter()
+    boxes: dict = defaultdict(list)
+    for index in range(doc.page_count):
+        page = doc[index]
+        limit = abs(page.rect.get_area()) * 0.08
+        seen = set()
+        for info in page.get_images(full=True):
+            for rect in page.get_image_rects(info[0]):
+                key = (round(rect.x0), round(rect.y0), round(rect.x1), round(rect.y1))
+                if key in seen or abs(rect.get_area()) > limit:
+                    continue
+                seen.add(key)
+                counts[key] += 1
+                boxes[key].append((index, rect))
+
+    enough = max(2, doc.page_count * 0.6)
+    found: dict[int, list] = defaultdict(list)
+    for key, count in counts.items():
+        if count >= enough:
+            for index, rect in boxes[key]:
+                found[index].append(rect)
+    return found
+
+
+def whiten(page: "fitz.Page", rects: Sequence["fitz.Rect"]) -> None:
+    """
+    Blank the given areas, leaving white paper.
+
+    These come straight from the image list, so they are already in the
+    page's own space and need no turning. Drawing a white rectangle over the
+    top does not work - the stamp is painted after it - so the pixels are
+    redacted away instead.
+    """
+    if not rects:
+        return
+    for rect in rects:
+        page.add_redact_annot(rect)
+    for kwargs in ({"images": fitz.PDF_REDACT_IMAGE_PIXELS}, {}):
+        try:
+            page.apply_redactions(**kwargs)
+            return
+        except (AttributeError, TypeError):       # older PyMuPDF signature
+            continue
+
+
+def header_footer_bands(doc: "fitz.Document") -> tuple[float, float]:
+    """
+    Where the header ends and the footer starts, agreed across the document.
+
+    Some pages come out of the PDF with their text shattered into overlapping
+    fragments - "Question" arrives as "Qu", "uest", "tion", and "Mark Scheme"
+    as "Mar", "rk S", "Sche", "eme" - so no fragment reads as a header and the
+    whole banner survives into the middle of a question, at the page join.
+
+    A Cambridge paper prints its header in the same place on every page, so a
+    page that cannot recognise its own can borrow the measurement from the
+    pages that can. Only a figure agreed by at least two pages is used.
+    """
+    heads: Counter = Counter()
+    feet: Counter = Counter()
+    for index in range(doc.page_count):
+        page = doc[index]
+        shown = page.rect
+        band = shown.height * 0.16
+        rects = furniture_rects(page)
+        top = max((r.y1 for r in rects if r.y1 < band), default=0.0)
+        bottom = min((r.y0 for r in rects if r.y0 > shown.height - band),
+                     default=0.0)
+        if top:
+            heads[round(top)] += 1
+        if bottom:
+            feet[round(bottom)] += 1
+
+    head = max((v for v, n in heads.items() if n >= 2), default=0)
+    foot = min((v for v, n in feet.items() if n >= 2), default=0)
+    return float(head), float(foot)
+
+
 def tail_matter_top(page: "fitz.Page") -> float | None:
     """
     Where the data sheet begins on this page, if it does.
@@ -383,7 +472,8 @@ def tail_matter_top(page: "fitz.Page") -> float | None:
     return min(tops) if tops else None
 
 
-def strip_furniture(page: "fitz.Page") -> None:
+def strip_furniture(page: "fitz.Page",
+                    bands: tuple[float, float] | None = None) -> None:
     """
     Blank the headers, footers and margin bars on this page.
 
@@ -393,16 +483,28 @@ def strip_furniture(page: "fitz.Page") -> None:
     then turned up as stray rules in the middle of a question wherever two
     pages were joined.
 
+    `bands` is where the rest of the document agrees its header ends and its
+    footer starts. It is used only where this page found none of its own,
+    which happens when its text comes through shattered into fragments.
+
     Redaction works in the page's own space, so the rectangles are converted
     back out of display coordinates before being applied.
     """
     rects = furniture_rects(page)
     tail = tail_matter_top(page)
-    if not rects and tail is None:
-        return
 
     shown = page.rect
     band = shown.height * 0.16
+
+    borrowed = []
+    head, foot = bands or (0.0, 0.0)
+    if head and not any(r.y1 < band for r in rects):
+        borrowed.append(fitz.Rect(shown.x0, shown.y0, shown.x1, head + 2.0))
+    if foot and not any(r.y0 > shown.height - band for r in rects):
+        borrowed.append(fitz.Rect(shown.x0, foot - 2.0, shown.x1, shown.y1))
+
+    if not rects and tail is None and not borrowed:
+        return
 
     # Where the real content starts and ends, so a header can be swept from
     # the page edge right down to it. Clearing only the words left the ruled
@@ -456,6 +558,7 @@ def strip_furniture(page: "fitz.Page") -> None:
             rect = fitz.Rect(shown.x0, rect.y0 - 2.0, shown.x1, rect.y1 + 2.0)
         widened.append(rect)
 
+    widened.extend(borrowed)
     if tail is not None:
         widened.append(fitz.Rect(shown.x0, tail - 2.0, shown.x1, shown.y1))
 
@@ -1062,12 +1165,15 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
         # and so is the "BLANK PAGE" that marks the end of the paper.
         answers_from = first_answer_table_page(doc)
         content_end = last_content_page(doc)
+        stamps = stamp_rects(doc)
+        bands = header_footer_bands(doc) if s.strip_furniture else None
 
         all_spans = []
         for index in range(doc.page_count):
             page = doc[index]
+            whiten(page, stamps.get(index, ()))
             if s.strip_furniture:
-                strip_furniture(page)
+                strip_furniture(page, bands)
             all_spans.append(body_spans(page))
 
         # A mark scheme's preamble is not searched for questions - its
