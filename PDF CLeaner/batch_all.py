@@ -17,11 +17,15 @@ import json
 import shutil
 import sys
 import time
+import re
 import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pdfcleaner as pc
+
+#: The " (1)" a browser adds when the same paper is downloaded twice.
+_COPY = re.compile(r" \(\d+\)$")
 
 
 def load_done(log: Path) -> dict:
@@ -71,6 +75,15 @@ def main(argv=None) -> int:
         print(f"PNGs written     : {images}")
         return 0
 
+    # A paper downloaded twice arrives as "<name> (1).pdf" beside "<name>.pdf".
+    # Cleaning both wastes the time and puts the same question in the output
+    # twice under a name nobody wants, so the copy is passed over.
+    copies = [q for q in pdfs if _COPY.search(q.stem)
+              and q.with_name(_COPY.sub("", q.stem) + ".pdf").is_file()]
+    if copies:
+        print(f"skipping {len(copies)} duplicate downloads", flush=True)
+        pdfs = [q for q in pdfs if q not in set(copies)]
+
     todo = [q for q in pdfs if str(q) not in done]
     print(f"{len(pdfs)} papers, {len(done)} already done, {len(todo)} to go", flush=True)
 
@@ -78,6 +91,8 @@ def main(argv=None) -> int:
     for i, pdf in enumerate(todo, 1):
         if a.limit and i > a.limit:
             break
+        if not pdf.is_file():          # deleted since the list was taken
+            continue
         row = {"paper": str(pdf), "name": pdf.stem}
         t0 = time.time()
         staging = out / f"_tmp_{pdf.stem}"
