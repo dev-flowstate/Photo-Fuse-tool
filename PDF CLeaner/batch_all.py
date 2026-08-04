@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
 import re
-import traceback
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -26,6 +27,40 @@ import pdfcleaner as pc
 
 #: The " (1)" a browser adds when the same paper is downloaded twice.
 _COPY = re.compile(r" \(\d+\)$")
+
+
+def one_paper(job: tuple[str, str, int]) -> dict:
+    """
+    Clean a single paper and move its questions into the output folder.
+
+    Takes and returns plain data so it can be handed to a worker process.
+    Each paper stages into its own folder, named after itself, so several
+    can run at once without treading on each other.
+    """
+    name, out_dir, dpi = job
+    pdf, out = Path(name), Path(out_dir)
+    row = {"paper": name, "name": pdf.stem}
+    started = time.time()
+    staging = out / f"_tmp_{pdf.stem}"
+    try:
+        result = pc.clean_pdf(pdf, staging, pc.CleanSettings(
+            dpi=dpi, split_questions=True, save_pdf=False))
+        moved = 0
+        for png in sorted((result.questions_dir or staging).glob("*.png")):
+            target = out / png.name
+            if target.exists():
+                target.unlink()
+            shutil.move(str(png), str(target))
+            moved += 1
+        row.update(status="ok" if moved else "no-questions", questions=moved,
+                   pages_in=result.pages_in, pages_out=result.pages_out)
+    except Exception as exc:                           # noqa: BLE001 - logged
+        row.update(status="error", questions=0,
+                   error=f"{type(exc).__name__}: {exc}"[:300])
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    row["seconds"] = round(time.time() - started, 1)
+    return row
 
 
 def load_done(log: Path) -> dict:
@@ -49,6 +84,8 @@ def main(argv=None) -> int:
     p.add_argument("--dpi", type=int, default=400)
     p.add_argument("--status", action="store_true", help="show progress and exit")
     p.add_argument("--limit", type=int, default=0, help="stop after N papers (testing)")
+    p.add_argument("--workers", type=int, default=0,
+                   help="papers to clean at once (default: half the logical CPUs)")
     a = p.parse_args(argv)
 
     root = Path(a.root)
@@ -87,46 +124,38 @@ def main(argv=None) -> int:
     todo = [q for q in pdfs if str(q) not in done]
     print(f"{len(pdfs)} papers, {len(done)} already done, {len(todo)} to go", flush=True)
 
+    if a.limit:
+        todo = todo[:a.limit]
+    jobs = [(str(q), str(out), a.dpi) for q in todo if q.is_file()]
+
+    # One paper has nothing to do with the next, so they run several at a
+    # time. The parent keeps the log to itself - several processes appending
+    # to one file interleave and corrupt it.
+    workers = a.workers if a.workers > 0 else max(1, (os.cpu_count() or 2) // 2)
+    workers = max(1, min(workers, len(jobs)))
+    print(f"running {workers} at a time", flush=True)
+
     started = time.time()
-    for i, pdf in enumerate(todo, 1):
-        if a.limit and i > a.limit:
-            break
-        if not pdf.is_file():          # deleted since the list was taken
-            continue
-        row = {"paper": str(pdf), "name": pdf.stem}
-        t0 = time.time()
-        staging = out / f"_tmp_{pdf.stem}"
+    finished = 0
+    with log.open("a", encoding="utf-8") as fh:
+        if workers == 1:
+            results = map(one_paper, jobs)
+        else:
+            pool = ProcessPoolExecutor(max_workers=workers)
+            results = pool.map(one_paper, jobs, chunksize=1)
         try:
-            settings = pc.CleanSettings(dpi=a.dpi, split_questions=True, save_pdf=False)
-            result = pc.clean_pdf(pdf, staging, settings)
-
-            moved = 0
-            for png in sorted((result.questions_dir or staging).glob("*.png")):
-                target = out / png.name
-                if target.exists():
-                    target.unlink()
-                shutil.move(str(png), str(target))
-                moved += 1
-
-            row.update(status="ok" if moved else "no-questions", questions=moved,
-                       pages_in=result.pages_in, pages_out=result.pages_out,
-                       seconds=round(time.time() - t0, 1))
-        except Exception as exc:                       # noqa: BLE001 - logged
-            row.update(status="error", questions=0,
-                       error=f"{type(exc).__name__}: {exc}"[:300],
-                       seconds=round(time.time() - t0, 1))
-            traceback.print_exc(file=sys.stderr)
+            for row in results:
+                finished += 1
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                fh.flush()
+                rate = (time.time() - started) / finished
+                left = (len(jobs) - finished) * rate / 3600
+                print(f"[{finished}/{len(jobs)}] {Path(row['paper']).name:<28} "
+                      f"{row['status']:<13} {row.get('questions', 0):>3} qs  "
+                      f"{row['seconds']:>5.1f}s   ~{left:.1f}h left", flush=True)
         finally:
-            shutil.rmtree(staging, ignore_errors=True)
-
-        with log.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-        rate = (time.time() - started) / i
-        left = (len(todo) - i) * rate / 3600
-        print(f"[{i}/{len(todo)}] {pdf.name:<28} {row['status']:<13} "
-              f"{row.get('questions', 0):>3} qs  {row['seconds']:>5.1f}s   "
-              f"~{left:.1f}h left", flush=True)
+            if workers > 1:
+                pool.shutdown(wait=True)
 
     print("batch finished", flush=True)
     return 0
