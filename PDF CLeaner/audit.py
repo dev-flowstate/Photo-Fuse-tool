@@ -111,10 +111,28 @@ def edge_ink(png: Path, kind: str = "") -> tuple[float, float] | None:
     if line <= 0:
         return None
 
+    def runs(y: int) -> int:
+        """How many separate pieces of ink lie along this row."""
+        edges = np.flatnonzero(np.diff(
+            np.concatenate(([0], mask[y].view(np.int8), [0]))))
+        return len(edges) // 2
+
     def measure(y: int) -> float:
-        if kind == "ms" and pc._unbroken(mask[y]) >= mask.shape[1] * 0.5:
+        # Two things have to be true at once, and neither says it alone.
+        #
+        # A line cut through the middle leaves a piece of ink for every
+        # letter stroke it crossed - dozens of them - AND about as much ink
+        # as a whole line. A table border leaves one or two long pieces,
+        # however much ink they add up to; the top of a properly trimmed
+        # line leaves many pieces but only the tips of its tallest letters,
+        # a fraction of a line's worth.
+        #
+        # Measuring the ink alone called a clean mark scheme 6.82; counting
+        # the pieces alone called a clean question paper 24.
+        if runs(y) < 10:
             return 0.0
-        return float(rows[y] / line)
+        ratio = float(rows[y] / line)
+        return ratio if ratio >= 0.8 else 0.0
 
     return measure(inked[0]), measure(inked[-1])
 
