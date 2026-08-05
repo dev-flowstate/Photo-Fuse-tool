@@ -39,10 +39,19 @@ def main(argv=None) -> int:
         return 1
     rows = json.loads(report.read_text(encoding="utf-8"))
 
-    images: dict[str, list[Path]] = defaultdict(list)
+    # By name, not by path. A run stopped part way can leave one image in
+    # two places, and counting it twice put duplicate lines in the manifest.
+    found: dict[str, dict[str, Path]] = defaultdict(dict)
     for png in out.rglob("*.png"):
         if "_q" in png.stem:
-            images[png.stem.rsplit("_q", 1)[0]].append(png)
+            found[png.stem.rsplit("_q", 1)[0]].setdefault(png.name, png)
+    images: dict[str, list[Path]] = {
+        stem: sorted(by_name.values()) for stem, by_name in found.items()}
+
+    # One row per paper. The same paper can sit in the tree twice under
+    # different folders, and counting it twice doubled its lines here.
+    seen: set[str] = set()
+    rows = [r for r in rows if not (r["name"] in seen or seen.add(r["name"]))]
 
     clean, dirty = [], []
     reasons: Counter = Counter()
@@ -77,12 +86,18 @@ def main(argv=None) -> int:
             dest.mkdir(exist_ok=True)
             for png in held:
                 target = dest / png.name
-                if target.resolve() == png.resolve():
+                if target == png or not png.is_file():
+                    # Already filed, or gone since the list was taken. Either
+                    # way there is nothing to move, and stopping the whole run
+                    # over one file would undo the thousands already placed.
                     continue
                 if target.exists():
                     target.unlink()
-                shutil.move(str(png), str(target))
-                moved += 1
+                try:
+                    shutil.move(str(png), str(target))
+                    moved += 1
+                except OSError as exc:
+                    print(f"   could not file {png.name}: {exc}", flush=True)
         return moved
 
     # Both sets are filed, so nothing is left lying between the folders a
