@@ -305,9 +305,11 @@ def main(argv=None) -> int:
     # Height cannot be used for this. A maths paper asks whole questions in
     # one line - "Solve the inequality |2x + 3| > 3|x + 2|. [4]" - and those
     # are short and perfectly correct.
+    # The web copies are the same pictures at half size, so counting them
+    # too doubled every paper and called the whole run out of date.
     images: dict = defaultdict(list)
     for png in out.rglob("*.png"):
-        if "_q" in png.stem:
+        if "_q" in png.stem and not png.parent.name.endswith("_web"):
             images[png.stem.rsplit("_q", 1)[0]].append(png)
 
     print("\nchecking the images for cuts through a line", flush=True)
