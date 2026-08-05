@@ -389,9 +389,23 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     # away as a barcode - and because it sat near the top of the page it was
     # then widened to the full width, taking the question number above it
     # with it. That is why so many maths mark schemes had no question 1.
+    # Nor is a share of the block enough on its own. Maths sets its brackets
+    # in a font whose codes are control characters, so "y = f(x)" arrives as
+    # six characters of which two are odd - a third of the block, and it was
+    # being called a barcode. It then counted as the deepest thing in the
+    # header, and the sweep that follows the header down the page took the
+    # question number sitting above it. That is why so many maths papers
+    # stopped one question short.
+    #
+    # Measured over 220 papers: every one of the 149 real barcode strips
+    # carries no letters or digits whatever, and runs 13 to 32 characters.
+    # Every block that mixes odd codes with readable text is either maths or
+    # the variant strip, which is longer still. So the odd codes have to
+    # outnumber the readable ones and be many in their own right.
     visible = [ch for ch in body if not ch.isspace()]
     odd = sum(1 for ch in visible if unicodedata.category(ch) in ("Cc", "Cf", "Cn"))
-    if len(visible) >= 6 and odd > len(visible) * 0.3:
+    readable = sum(1 for ch in visible if ch.isalnum())
+    if len(visible) >= 6 and odd > len(visible) * 0.3 and odd >= 8 and odd > readable:
         return True
 
     if re.fullmatch(r"\*[\s\d]*\*", body):        # * 0000800000004 *
@@ -869,6 +883,39 @@ def find_questions_ms(pages, tolerance: float = 4.0):
     return find_question_starts(pages, tolerance, snap_to_part=True)
 
 
+def _line_openings(spans) -> dict[int, float]:
+    """Where each line of a page begins, kept by whole points of height."""
+    starts: dict[int, float] = {}
+    for left, _, y, _ in spans:
+        key = round(y)
+        if left < starts.get(key, left + 1.0):
+            starts[key] = left
+    return starts
+
+
+def _opens_line(starts: dict[int, float], left: float, y: float,
+                reach: int = 5) -> bool:
+    """
+    Whether this is the first thing printed on its line.
+
+    A question number always is - it hangs out in the margin with the whole
+    question indented past it. A number with words to its left is part of a
+    sentence, a table cell, or an axis caption.
+
+    That distinction is what a column test alone cannot make. On a Chemistry
+    Planning paper a results table is headed "V final / cm3", and the raised
+    3 of the units lands at the very same left edge as the question numbers -
+    so the paper read three questions where it asks two, and the second was
+    cut in half to make room for the third.
+
+    A few points of height either side, because a raised or dropped character
+    does not share the exact y of the line it belongs to.
+    """
+    key = round(y)
+    return all(left <= starts.get(k, left) + 0.5
+               for k in range(key - reach, key + reach + 1))
+
+
 def find_question_starts(pages: list[list[tuple[float, float, str]]],
                          tolerance: float = 4.0,
                          snap_to_part: bool = True) -> list[tuple[int, float, int]]:
@@ -888,9 +935,10 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     """
     raw = []
     for index, spans in enumerate(pages):
+        opens = _line_openings(spans)
         for left, centre, y0, text in spans:
             number = _question_number(text)
-            if number is not None:
+            if number is not None and _opens_line(opens, left, y0):
                 raw.append((left, centre, index, y0, number, text))
     if not raw:
         return []
