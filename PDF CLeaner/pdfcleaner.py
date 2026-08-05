@@ -1076,7 +1076,12 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
     Such a span is matched on its LEFT edge, never its centre: the trailing
     wording drags the centre far to the right while the left edge stays on
     the column. The search covers 1 upwards, since a paper starts at 1 even
-    when the strict pass first saw question 7.
+    when the strict pass first saw question 7 - and on past the highest one
+    found, since a gap is not the only way a question goes missing. Where the
+    swallowed label belongs to the LAST question there is no gap to give it
+    away, and the question simply stayed joined to the one before it: a maths
+    paper ending "11 Functions f and g are defined by..." came out with
+    questions 10 and 11 in one picture.
     """
     found = sorted([(c[0], c[1], c[2]) for c in column], key=lambda c: (c[0], c[1]))
     lefts = [c[3] for c in column]
@@ -1084,18 +1089,21 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
         return found
     have = {n for _, _, n in found}
     low, high = min(lefts) - tolerance, max(lefts) + tolerance
+    # Past the end as well as in between. Nothing is lost by asking: a number
+    # that is not there simply is not found, and the first miss stops it.
+    beyond = list(range(max(have) + 1, min(max(have) + 12, 41)))
     missing = [n for n in range(1, max(have) + 1) if n not in have]
-    if not missing:
+    if not missing and not beyond:
         return found
 
     recovered = list(found)
-    for number in missing:
+
+    def look(number: int):
+        """Where this question's swallowed label is, if it is anywhere."""
         # It has to sit between the questions either side of it.
         before = max([(p, y) for p, y, n in recovered if n < number], default=(-1, -1.0))
         after = min([(p, y) for p, y, n in recovered if n > number], default=(10 ** 6, 0.0))
         pattern = re.compile(rf"^{number}(?=$|[\s(])")
-
-        hit = None
         for index, spans in enumerate(pages):
             for left, centre, y, text in spans:
                 aligned = (low <= left <= high
@@ -1104,13 +1112,23 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
                     continue
                 if (index, y) <= before or (index, y) >= after:
                     continue
-                hit = (index, y, number)
-                break
-            if hit:
-                break
+                return (index, y, number)
+        return None
+
+    for number in missing:
+        hit = look(number)
         if hit:
             recovered.append(hit)
             recovered.sort(key=lambda c: (c[0], c[1]))
+
+    # Past the end, stopping at the first number that is not there - so a
+    # paper of ten questions costs one extra look, not twelve.
+    for number in beyond:
+        hit = look(number)
+        if not hit:
+            break
+        recovered.append(hit)
+        recovered.sort(key=lambda c: (c[0], c[1]))
 
     return recovered
 
