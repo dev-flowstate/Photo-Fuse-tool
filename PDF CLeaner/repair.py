@@ -36,6 +36,7 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import families
 import pdfcleaner as pc
 
 try:
@@ -94,6 +95,17 @@ def hunt(searchable, target: list[int], column: tuple[float, float]):
     one.
     """
     low, high = column
+    # Where each line begins, so a number with text to its left can be ruled
+    # out. A question label opens its line; a value in the Mark column does
+    # not, and matching one of those turned a mark of 2 into question 2.
+    opens: list[dict[int, float]] = []
+    for spans in searchable:
+        starts: dict[int, float] = {}
+        for left, _, y, _ in spans:
+            key = round(y / 3.0)
+            starts[key] = min(starts.get(key, left), left)
+        opens.append(starts)
+
     found: list[tuple[int, float, int]] = []
     floor = (-1, -1.0)
     for number in target:
@@ -103,6 +115,8 @@ def hunt(searchable, target: list[int], column: tuple[float, float]):
             for left, centre, y, text in spans:
                 if not (low <= left <= high):
                     continue
+                if left > opens[index].get(round(y / 3.0), left) + 0.5:
+                    continue                # something is printed to its left
                 if not pattern.match(text.strip()):
                     continue
                 if (index, y) <= floor:
@@ -126,16 +140,22 @@ def column_of(searchable, found) -> tuple[float, float]:
                 lefts.append(left)
                 break
     if not lefts:
-        return (0.0, 200.0)
+        # Nothing was read at all, so the column has to be guessed. The
+        # question numbers are the leftmost thing on the page, so take the
+        # left edge of the text and allow a label's width either side.
+        edge = min((left for spans in searchable for left, _, _, _ in spans),
+                   default=0.0)
+        return (edge - 4.0, edge + 40.0)
     lefts.sort()
     middle = lefts[len(lefts) // 2]
-    return (middle - 30.0, middle + 60.0)
+    # Tight. Wide bands are how a numbered list inside an answer got in.
+    return (middle - 12.0, middle + 20.0)
 
 
 def repair_one(job) -> dict:
     """Try to read one paper again, knowing what it should contain."""
-    name, path, target, out_dir = job
-    row = {"name": name, "target": target}
+    name, path, target, out_dir, why = job
+    row = {"name": name, "target": target, "target_from": why}
     try:
         source, out = Path(path), Path(out_dir)
         kind, spans, searchable = read(source)
@@ -153,7 +173,12 @@ def repair_one(job) -> dict:
         if not after or row["after"] == row["before"]:
             row["status"] = "no better"
             return row
-        if len(after) < len(before):
+        # Fewer questions is usually a worse reading - but not when the target
+        # came from a family that is always the same shape. A Planning paper
+        # asks two questions, so a mark scheme read as nine was never right,
+        # and cutting it back to two is the repair rather than a loss.
+        if len(after) < len(before) and not (
+                why.startswith("family") and row["after"] == want):
             row["status"] = "worse, kept the old reading"
             return row
 
@@ -187,6 +212,7 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     out, root = Path(a.out), Path(a.root)
+    table = families.load()
     rows = json.loads((out / "audit.json").read_text(encoding="utf-8"))
     seen: set[str] = set()
     rows = [r for r in rows if not (r["name"] in seen or seen.add(r["name"]))]
@@ -215,16 +241,35 @@ def main(argv=None) -> int:
         pdf = next(root.rglob(row["name"] + ".pdf"), None)
         if pdf is None:
             continue
-        # What the other side says, if the other side can be believed.
+        # Where the target comes from, best evidence first.
+        #
+        # The other side of the same paper, if it is sound - it was read
+        # independently and agrees by construction. Failing that, what this
+        # kind of paper always looks like: a syllabus sets the same paper
+        # every session, so 9702 Paper 5 asks two questions every time.
+        #
+        # Where neither applies there is nothing to hold the search to, and a
+        # search with nothing to hold it produced sixteen wrong papers out of
+        # twenty. Those are left alone.
         mate = by.get(partner(row["name"]) or "")
-        target = None
+        target, why = None, ""
         if mate and not (set(mate["faults"]) - HARMLESS) and mate.get("questions"):
-            target = list(mate["questions"])
-        elif mate and mate.get("questions") and row.get("questions"):
-            highest = max(max(mate["questions"], default=0),
-                          max(row["questions"], default=0))
-            target = list(range(1, highest + 1))
-        jobs.append((row["name"], str(pdf), target, str(out)))
+            target, why = list(mate["questions"]), "partner"
+        else:
+            shape = families.expected(row["name"], table)
+            certain = (table.get(families.family_of(row["name"]) or "")
+                       or {}).get("certain")
+            if shape and certain:
+                target, why = list(range(1, shape[0] + 1)), f"family {shape[1]:.0%}"
+            elif "gap" in row["faults"] and row.get("questions"):
+                # The paper read most of itself and skipped a number in the
+                # middle. Whatever it did find gives the column exactly, so
+                # looking for the hole is the safest search there is - it is
+                # bounded by a confident question on either side.
+                target, why = list(range(1, max(row["questions"]) + 1)), "filling a gap"
+        if target is None:
+            continue
+        jobs.append((row["name"], str(pdf), target, str(out), why))
 
     if a.status or not jobs:
         print(f"{len(jobs)} papers to repair for kind={a.kind}"

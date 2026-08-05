@@ -1,0 +1,172 @@
+{
+ "9700_2": {
+  "questions": 6,
+  "share": 1.0,
+  "papers": 68,
+  "seen": {
+   "6": 68
+  },
+  "certain": true
+ },
+ "9700_4": {
+  "questions": 10,
+  "share": 1.0,
+  "papers": 67,
+  "seen": {
+   "10": 67
+  },
+  "certain": true
+ },
+ "9700_5": {
+  "questions": 2,
+  "share": 0.923,
+  "papers": 65,
+  "seen": {
+   "2": 60,
+   "3": 5
+  },
+  "certain": true
+ },
+ "9701_2": {
+  "questions": 4,
+  "share": 0.522,
+  "papers": 67,
+  "seen": {
+   "3": 6,
+   "4": 35,
+   "5": 18,
+   "6": 8
+  },
+  "certain": false
+ },
+ "9701_4": {
+  "questions": 9,
+  "share": 0.409,
+  "papers": 66,
+  "seen": {
+   "6": 7,
+   "7": 8,
+   "8": 16,
+   "9": 27,
+   "10": 8
+  },
+  "certain": false
+ },
+ "9701_5": {
+  "questions": 2,
+  "share": 0.914,
+  "papers": 58,
+  "seen": {
+   "2": 53,
+   "3": 5
+  },
+  "certain": true
+ },
+ "9702_2": {
+  "questions": 7,
+  "share": 0.565,
+  "papers": 69,
+  "seen": {
+   "6": 19,
+   "7": 39,
+   "8": 11
+  },
+  "certain": false
+ },
+ "9702_4": {
+  "questions": 12,
+  "share": 0.5,
+  "papers": 70,
+  "seen": {
+   "10": 28,
+   "11": 1,
+   "12": 35,
+   "13": 5,
+   "14": 1
+  },
+  "certain": false
+ },
+ "9702_5": {
+  "questions": 2,
+  "share": 1.0,
+  "papers": 67,
+  "seen": {
+   "2": 67
+  },
+  "certain": true
+ },
+ "9709_1": {
+  "questions": 11,
+  "share": 0.722,
+  "papers": 36,
+  "seen": {
+   "10": 7,
+   "11": 26,
+   "12": 3
+  },
+  "certain": false
+ },
+ "9709_2": {
+  "questions": 7,
+  "share": 0.794,
+  "papers": 68,
+  "seen": {
+   "7": 54,
+   "8": 14
+  },
+  "certain": false
+ },
+ "9709_3": {
+  "questions": 10,
+  "share": 0.622,
+  "papers": 45,
+  "seen": {
+   "10": 28,
+   "11": 17
+  },
+  "certain": false
+ },
+ "9709_4": {
+  "questions": 7,
+  "share": 0.844,
+  "papers": 64,
+  "seen": {
+   "6": 7,
+   "7": 54,
+   "8": 3
+  },
+  "certain": false
+ },
+ "9709_5": {
+  "questions": 7,
+  "share": 0.8,
+  "papers": 55,
+  "seen": {
+   "6": 11,
+   "7": 44
+  },
+  "certain": false
+ },
+ "9709_6": {
+  "questions": 7,
+  "share": 0.746,
+  "papers": 63,
+  "seen": {
+   "6": 11,
+   "7": 47,
+   "8": 5
+  },
+  "certain": false
+ },
+ "9709_7": {
+  "questions": 7,
+  "share": 0.696,
+  "papers": 23,
+  "seen": {
+   "6": 3,
+   "7": 16,
+   "8": 4
+  },
+  "certain": false
+ }
+}

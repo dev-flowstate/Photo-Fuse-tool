@@ -47,33 +47,6 @@ _NAME = re.compile(r"^(\d{4})_([a-z]\d{2})_(qp|ms)_(\d+)$", re.I)
 HARMLESS = {"shredded", "mixed-rotation"}
 
 
-def bare_starts(name: str, numbers: list[int]) -> list[int]:
-    """
-    Which of these questions open on a bare number rather than a part label.
-
-    A mark scheme lists every part in its Question column - 1(a), 2(b)(ii) -
-    so a real question there begins "2(". A bare "2" down the left of the
-    page is a numbered list inside somebody's answer.
-    """
-    pdf = next(Path(ROOT).rglob(name + ".pdf"), None)
-    if pdf is None:
-        return []
-    try:
-        doc = fitz.open(str(pdf))
-    except Exception:                                  # noqa: BLE001
-        return []
-    try:
-        labelled: set[int] = set()
-        for index in range(doc.page_count):
-            for _, _, _, text in pc.body_spans(doc[index]):
-                body = text.strip()
-                m = re.match(r"^(\d{1,2})\s*\(", body)
-                if m:
-                    labelled.add(int(m.group(1)))
-        return [n for n in numbers if n not in labelled]
-    finally:
-        doc.close()
-
 
 def partner(name: str) -> str | None:
     m = _NAME.match(name)
@@ -128,15 +101,13 @@ def main(argv=None) -> int:
         if mate and mate in trusted and trusted[mate] != len(numbers):
             why.append(f"partner has {trusted[mate]}, this has {len(numbers)}")
 
-        # A mark scheme labels every part - 2(a), 2(b)(i) - so a question
-        # there opens with "2(" and never with a bare "2". A bare number is
-        # what a numbered list inside an answer looks like, and one Planning
-        # paper came back as three questions because the apparatus list in
-        # 1(e) reads "1 Bunsen burner, 2 Crucible, 3 Measure mass...".
-        if "_ms_" in name:
-            bare = bare_starts(name, numbers)
-            if bare:
-                why.append(f"opens on a bare number, not a part label: {bare}")
+        # Asking whether a mark scheme's question opens on "2(" rather than a
+        # bare "2" was tried here and taken out again. It reads a numbered
+        # list inside an answer correctly, but only where the paper writes
+        # "2(a)" as one piece - where it writes the number and the part
+        # separately it condemns perfectly good work, which it did to a paper
+        # checked by eye. The tests that stand are below, and the rest is a
+        # person looking at the pictures.
 
         for png in images:
             edge = auditor.edge_ink(png)

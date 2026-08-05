@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from collections import Counter, defaultdict
@@ -24,6 +25,18 @@ OUT = Path(r"D:\Papers\output questions and markschemes")
 #: fragments is only worth knowing about if something came of it, and the
 #: something would be one of the other faults.
 HARMLESS = {"shredded", "mixed-rotation"}
+
+_NAME = re.compile(r"^(\d{4})_([a-z]\d{2})_(qp|ms)_(\d+)$", re.I)
+
+
+def partner(name):
+    """The other side of this paper - its mark scheme, or its question paper."""
+    m = _NAME.match(name)
+    if not m:
+        return None
+    other = "ms" if m.group(3).lower() == "qp" else "qp"
+    return f"{m.group(1)}_{m.group(2)}_{other}_{m.group(4)}"
+
 
 
 def main(argv=None) -> int:
@@ -53,6 +66,13 @@ def main(argv=None) -> int:
     seen: set[str] = set()
     rows = [r for r in rows if not (r["name"] in seen or seen.add(r["name"]))]
 
+    # A question links to its mark scheme on the site, so one without the
+    # other is a link that points at nothing. A paper is only clean if its
+    # partner is clean too.
+    sound = {row["name"] for row in rows
+             if not (set(row.get("faults", ())) - HARMLESS)
+             and images.get(row["name"])}
+
     clean, dirty = [], []
     reasons: Counter = Counter()
     for row in rows:
@@ -60,9 +80,13 @@ def main(argv=None) -> int:
         held = sorted(images.get(row["name"], ()))
         if not held:
             continue
+        mate = partner(row["name"])
         if faults:
             dirty.append((row, held))
             reasons.update(faults)
+        elif mate and mate not in sound:
+            dirty.append((row, held))
+            reasons["no usable partner"] += 1
         else:
             clean.append((row, held))
 
