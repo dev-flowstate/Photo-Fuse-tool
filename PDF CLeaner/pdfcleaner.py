@@ -1465,10 +1465,16 @@ class Result:
 
 def clean_pdf(src: str | Path, dst: str | Path | None = None,
               s: CleanSettings | None = None,
-              progress: Callable[[int, int, str], None] | None = None) -> Result:
+              progress: Callable[[int, int, str], None] | None = None,
+              marks: list[tuple[int, float, int]] | None = None) -> Result:
     """
     Clean `src` and write the result. `progress(done, total, message)` is
     called as it goes, so a GUI can show a bar.
+
+    `marks` overrides where the questions are taken to begin, as (page, y in
+    points, number). Repairing a paper works out the right answer by other
+    means - usually from the other side of the same paper - and this is how
+    that answer is handed back in to be cut.
     """
     s = s or CleanSettings()
     src = Path(src)
@@ -1515,8 +1521,9 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
             searchable = [[] if i < answers_from else spans
                           for i, spans in enumerate(all_spans)]
 
-        found = (find_questions_ms(searchable) if s.kind == "ms"
-                 else find_questions_qp(searchable))
+        found = marks if marks is not None else (
+            find_questions_ms(searchable) if s.kind == "ms"
+            else find_questions_qp(searchable))
 
         if s.pages.strip():
             wanted = parse_pages(s.pages, doc.page_count)
