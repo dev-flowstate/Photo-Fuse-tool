@@ -66,6 +66,26 @@ def partner(name: str) -> str | None:
     return f"{m.group(1)}_{m.group(2)}_{other}_{m.group(4)}"
 
 
+def sound_reading(row: dict) -> bool:
+    """
+    Whether this paper's own reading can be believed enough to teach another.
+
+    Insisting on no faults at all was too strict, and circularly so. A
+    question paper that reads 1 to 11 with nothing missing is a good
+    reading; if its mark scheme reads 2 to 11 the pair disagree, and BOTH
+    are marked pair-mismatch. Each was then disqualified from teaching the
+    other by a fault that only exists because of the other.
+
+    So pair-mismatch is set aside here, and what is asked instead is
+    whether this reading stands up by itself: no other fault, and the
+    numbers running from one with nothing skipped.
+    """
+    if set(row.get("faults", ())) - HARMLESS - {"pair-mismatch"}:
+        return False
+    numbers = row.get("questions") or []
+    return bool(numbers) and numbers == list(range(1, len(numbers) + 1))
+
+
 def read(path: Path):
     """The page spans and the kind, ready to search."""
     doc = fitz.open(str(path))
@@ -253,7 +273,7 @@ def main(argv=None) -> int:
         # twenty. Those are left alone.
         mate = by.get(partner(row["name"]) or "")
         target, why = None, ""
-        if mate and not (set(mate["faults"]) - HARMLESS) and mate.get("questions"):
+        if mate and mate.get("questions") and sound_reading(mate):
             target, why = list(mate["questions"]), "partner"
         else:
             shape = families.expected(row["name"], table)

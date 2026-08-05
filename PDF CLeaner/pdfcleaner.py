@@ -382,8 +382,15 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     # "type of organism ……… bacterium ………" is a third ellipsis characters and
     # was being deleted outright, and the same would go for any line carrying
     # degrees, +/-, alpha or a superscript.
+    #
+    # The private use area is not counted either, though it looks just as
+    # strange. Maths fonts build a tall bracket out of it, so a line reading
+    # "(x - 3/2x)^6" comes through as private-use codes and was being thrown
+    # away as a barcode - and because it sat near the top of the page it was
+    # then widened to the full width, taking the question number above it
+    # with it. That is why so many maths mark schemes had no question 1.
     visible = [ch for ch in body if not ch.isspace()]
-    odd = sum(1 for ch in visible if unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cn"))
+    odd = sum(1 for ch in visible if unicodedata.category(ch) in ("Cc", "Cf", "Cn"))
     if len(visible) >= 6 and odd > len(visible) * 0.3:
         return True
 
