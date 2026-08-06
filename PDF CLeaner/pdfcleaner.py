@@ -1101,11 +1101,22 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
             # Planning paper that asks two questions they ran to ten and won
             # on length. Weighed before the count for that reason, and only
             # for mark schemes: a question paper's numbers are bare by design.
-            named = True
-            if snap_to_part and column:
-                parts = sum(1 for c in column if _NAMES_A_PART.match(c[6].strip()))
-                named = parts >= len(column) * 0.5
-            score = (seed_x <= margin, named,
+            # How far down the document the column runs, counted over the
+            # whole of it rather than the questions picked out of it. That is
+            # what separates a real Question column from the marking points
+            # listed inside one answer - "any one from: 1 calibrate
+            # colorimeter; 2 use a blank" - which count up exactly like
+            # question numbers but never leave the answer they belong to. On
+            # a Planning paper asking two questions such a list ran to ten and
+            # won on length.
+            #
+            # Asking instead whether the labels name their parts does not
+            # work: a maths mark scheme writes "3(a)" for a question with
+            # parts and a bare "5" for one without, so that test split one
+            # real column in two and took the half with the parts - which is
+            # how questions started disappearing out of the middle.
+            reach = len({c[2] for c in column})
+            score = (seed_x <= margin, reach,
                      len({p for p, _, _ in picked}),
                      min(numbers) == 1, len(picked), len(numbers), -seed_x)
             if score > best_score:
