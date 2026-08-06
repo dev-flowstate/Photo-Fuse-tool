@@ -305,12 +305,20 @@ def main(argv=None) -> int:
     # Height cannot be used for this. A maths paper asks whole questions in
     # one line - "Solve the inequality |2x + 3| > 3|x + 2|. [4]" - and those
     # are short and perfectly correct.
-    # The web copies are the same pictures at half size, so counting them
-    # too doubled every paper and called the whole run out of date.
+    # Only the working set is counted. The others hold pictures under the very
+    # same names - the web copies are them at half size, and the handover
+    # folders are copies set aside for the database - so walking everything
+    # found each one three or four times over and called the paper out of date
+    # on the strength of it.
+    aside = ("already done", "already done replacements",
+             "done highquality 400dpi")
     images: dict = defaultdict(list)
     for png in out.rglob("*.png"):
-        if "_q" in png.stem and not png.parent.name.endswith("_web"):
-            images[png.stem.rsplit("_q", 1)[0]].append(png)
+        if "_q" not in png.stem or png.parent.name.endswith("_web"):
+            continue
+        if any(part in aside for part in png.relative_to(out).parts[:-1]):
+            continue
+        images[png.stem.rsplit("_q", 1)[0]].append(png)
 
     print("\nchecking the images for cuts through a line", flush=True)
     done = 0
