@@ -249,6 +249,19 @@ _AWARDING = re.compile(r"Cambridge\s+(?:International|Assessment|University\s+Pr
 #: "Page 9 of 13", printed in the footer of every mark scheme.
 _PAGE_OF = re.compile(r"\bPage\s+\d+\s+of\s+\d+\b", re.I)
 
+#: What a part of a question is worth: "[3]", "[Total: 15]". A paper prints
+#: one after every part, so the last of them marks the end of the questions.
+_MARK_ALLOCATION = re.compile(r"\[\s*(?:Total:?\s*)?\d{1,2}\s*\]")
+
+#: The paper directing the candidate around itself, rather than asking
+#: anything. It is printed on a page of its own after a question's total, so
+#: it was coming out as a strip of text on the end of the question before it.
+_NAVIGATION = re.compile(
+    r"^(?:Questions?\s+\d+\s+starts?\s+on\b"        # "Question 3 starts on page 10"
+    r"|Section\s+[A-D]\b\s*$"                       # a section divider
+    r"|Answer\s+(?:one|any|all)\b[^.]{0,40}\.?\s*$"  # "Answer one question."
+    r")", re.I)
+
 #: What a paper prints after its last question: the data pages, the spare
 #: lined pages and the copyright notice. None of it belongs to a question.
 _END_MATTER = re.compile(
@@ -289,7 +302,17 @@ def last_content_page(doc: "fitz.Document") -> int:
     end = doc.page_count
     while end > 1 and _END_MATTER.search(doc[end - 1].get_text()):
         end -= 1
-    return end
+
+    # Never trim past the last thing that says what a question is worth. The
+    # final question's "[Total: 15]" can sit several pages beyond its last
+    # words, with the answer space in between, and a page of that answer space
+    # reads as spare lined paper - so the run of end matter reached back over
+    # the total and the last question came out not saying what it was worth.
+    marked = 0
+    for index in range(doc.page_count):
+        if _MARK_ALLOCATION.search(doc[index].get_text()):
+            marked = index + 1
+    return max(end, marked)
 
 
 def first_answer_table_page(doc: "fitz.Document") -> int | None:
@@ -411,6 +434,14 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     if re.fullmatch(r"\*[\s\d]*\*", body):        # * 0000800000004 *
         return True
     if any(k in body for k in ("UCLES", "Turn over", "BLANK PAGE")):
+        return True
+
+    # The paper talking to the candidate about the paper: "Question 3 starts
+    # on page 10", a "Section B" divider and the "Answer one question." under
+    # it. These sit on their own after a question's total, on a page that is
+    # otherwise empty, and came out as a strip of text stuck to the bottom of
+    # the question before them - which belongs to none of them.
+    if _NAVIGATION.match(body):
         return True
 
     # The awarding body's name, the copyright line and the page count appear
