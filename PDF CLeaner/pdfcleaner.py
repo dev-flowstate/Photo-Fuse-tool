@@ -1243,10 +1243,22 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
     return recovered
 
 
-def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
-    """Rasterise one PDF page, cropped to the content window."""
-    if s.strip_furniture:
-        strip_furniture(page)
+def _clip_for(page: "fitz.Page", s: CleanSettings) -> "fitz.Rect":
+    """
+    The content window, moved down where it would cut a line in half.
+
+    The window is a fixed share of the page, which assumes nothing worth
+    keeping lies outside it. At the foot that is wrong: a question paper
+    prints the marks for a part hard against the bottom of the page, and
+    "[15]" running from 775 to 793 points was clipped at 787 - so the
+    bracket came out with its lower third painted away, and the question
+    appeared not to say what it was worth.
+
+    Only the bottom is moved. The header and footer have already been
+    redacted by the time this runs, so there is nothing down there to let
+    back in but the paper's own text; and leaving the top where it is keeps
+    the row each question starts on exactly as it was measured.
+    """
     rect = page.rect
     clip = fitz.Rect(
         rect.x0 + rect.width * s.crop_left,
@@ -1254,6 +1266,22 @@ def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
         rect.x0 + rect.width * s.crop_right,
         rect.y0 + rect.height * s.crop_bottom,
     )
+    bottom = clip.y1
+    for block in page.get_text("blocks"):
+        if not block[4].strip():
+            continue
+        box = _as_shown(page, fitz.Rect(block[0], block[1], block[2], block[3]))
+        if box.y0 < clip.y1 < box.y1:
+            bottom = max(bottom, box.y1 + 1.0)
+    clip.y1 = min(rect.y1, bottom)
+    return clip
+
+
+def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
+    """Rasterise one PDF page, cropped to the content window."""
+    if s.strip_furniture:
+        strip_furniture(page)
+    clip = _clip_for(page, s)
     pix = page.get_pixmap(dpi=s.dpi, clip=clip, colorspace=fitz.csRGB)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
