@@ -49,12 +49,24 @@ SOURCE_DPI = 400
 #: order; the first band a picture fits is the one it gets. Heights are in
 #: pixels of the 400 dpi original, so 1200 is three inches - a couple of
 #: lines and their answer space.
+#:
+#: A long question is shown scaled to fit, and the longer it is the harder
+#: it is scaled - so the same number of pixels per inch on the page ends up
+#: as far fewer on the screen, and the text goes soft. A short question is
+#: barely scaled at all and stays crisp on much less. So the long ones keep
+#: their resolution and the short ones give it up.
+#: What matters for sharpness is how many pixels across the page ends up
+#: with, since that is what a screen has to draw the text from. An A4 page
+#: is 2900 pixels across at 400 dpi; 1300 to 1700 of those is enough to
+#: stay crisp in an ordinary column, and past that nothing more is visible.
+#: So the ramp is gentle and stops well short of 400 - the long ones are
+#: given the top of that range, the short ones the bottom.
 SIZES = (
-    (1200, 1.00),      # a line or two: left alone, it costs nothing
-    (3000, 0.75),      # a short question: 300 dpi
-    (6000, 0.50),      # a page or so: 200 dpi
-    (12000, 0.40),     # several pages: 160 dpi
-    (10 ** 9, 0.30),   # the very long strips: 120 dpi
+    (1200, 0.40),      # a line or two: 160 dpi, about 1160 px across
+    (3000, 0.45),      # a short question: 180 dpi, about 1300 px
+    (6000, 0.50),      # a page or so: 200 dpi, about 1450 px
+    (12000, 0.55),     # several pages: 220 dpi, about 1600 px
+    (10 ** 9, 0.60),   # the very long strips: 240 dpi, about 1740 px
 )
 
 
