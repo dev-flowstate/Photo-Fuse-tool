@@ -1028,6 +1028,7 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     best: list[tuple[int, float, int]] = []
     best_column: list[tuple[int, float, int]] = []
     best_score = ()
+    best_pages = 0
     best_key, best_x = 0, 0.0
 
     # Try lining the labels up by their left edges and by their centres:
@@ -1115,14 +1116,30 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
             # parts and a bare "5" for one without, so that test split one
             # real column in two and took the half with the parts - which is
             # how questions started disappearing out of the middle.
-            reach = len({c[2] for c in column})
-            score = (seed_x <= margin, reach,
+            # How tightly the column holds its line. Measured on real papers,
+            # a mark scheme's Question column is centred to within a tenth of
+            # a point over every label in the paper - 90.9 on one, 95.8 on
+            # another - while its left edge wanders nine points as the labels
+            # grow from "5" to "10(a)". Nothing else on the page is that
+            # straight, so a column that is comes first.
+            spread = 0.0
+            if len(column) > 2:
+                axis = [c[5] if key else c[1] for c in column]
+                spread = max(axis) - min(axis)
+            score = (seed_x <= margin, spread <= 1.0,
                      len({p for p, _, _ in picked}),
                      min(numbers) == 1, len(picked), len(numbers), -seed_x)
             if score > best_score:
                 best_score, best = score, picked
                 best_key, best_x = key, seed_x
                 best_column = [(c[2], c[3], c[4], c[1], c[5]) for c in column]
+                # Kept beside the score rather than read back out of it. The
+                # guard below wants the page count, and every time a term was
+                # added to the tuple the position it sat at moved and the
+                # guard silently began reading something else - once the
+                # margin flag, once a spread flag, and the whole run collapsed
+                # on both occasions.
+                best_pages = len({p for p, _, _ in picked})
 
     if len(best) < 2:
         return []
@@ -1137,7 +1154,7 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     # empty; measured against the pages actually searched there is no second
     # page for it to reach.
     lively = sum(1 for spans in pages if spans)
-    if best_score[2] < 2 and lively > 2:
+    if best_pages < 2 and lively > 2:
         return []
 
     # Now that the column is known, recover any number the strict label match
