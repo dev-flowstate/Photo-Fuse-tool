@@ -1248,16 +1248,16 @@ def _clip_for(page: "fitz.Page", s: CleanSettings) -> "fitz.Rect":
     The content window, moved down where it would cut a line in half.
 
     The window is a fixed share of the page, which assumes nothing worth
-    keeping lies outside it. At the foot that is wrong: a question paper
-    prints the marks for a part hard against the bottom of the page, and
-    "[15]" running from 775 to 793 points was clipped at 787 - so the
-    bracket came out with its lower third painted away, and the question
-    appeared not to say what it was worth.
+    keeping lies outside it. Both edges are wrong about that. A question
+    paper prints the marks for a part hard against the bottom, and "[15]"
+    running from 775 to 793 points was clipped at 787 - so the bracket came
+    out with its lower third painted away and the question appeared not to
+    say what it was worth. At the head, a mark scheme opens its table high
+    enough that "1(a)" straddles the line, and the first part of a question
+    lost its label.
 
-    Only the bottom is moved. The header and footer have already been
-    redacted by the time this runs, so there is nothing down there to let
-    back in but the paper's own text; and leaving the top where it is keeps
-    the row each question starts on exactly as it was measured.
+    The header and footer are redacted before this runs, so reaching past
+    the line can only recover the paper's own text.
     """
     rect = page.rect
     clip = fitz.Rect(
@@ -1266,22 +1266,34 @@ def _clip_for(page: "fitz.Page", s: CleanSettings) -> "fitz.Rect":
         rect.x0 + rect.width * s.crop_right,
         rect.y0 + rect.height * s.crop_bottom,
     )
-    bottom = clip.y1
+    top, bottom = clip.y0, clip.y1
     for block in page.get_text("blocks"):
         if not block[4].strip():
             continue
         box = _as_shown(page, fitz.Rect(block[0], block[1], block[2], block[3]))
+        if box.y0 < clip.y0 < box.y1:
+            top = min(top, box.y0 - 1.0)
         if box.y0 < clip.y1 < box.y1:
             bottom = max(bottom, box.y1 + 1.0)
+    clip.y0 = max(rect.y0, top)
     clip.y1 = min(rect.y1, bottom)
     return clip
 
 
-def render_page(page: "fitz.Page", s: CleanSettings) -> Image.Image:
-    """Rasterise one PDF page, cropped to the content window."""
-    if s.strip_furniture:
-        strip_furniture(page)
-    clip = _clip_for(page, s)
+def render_page(page: "fitz.Page", s: CleanSettings,
+                clip: "fitz.Rect | None" = None) -> Image.Image:
+    """
+    Rasterise one PDF page, cropped to the content window.
+
+    A caller that needs to know where the window landed - to follow a
+    question's position through the crop - works it out first and passes it
+    in, having stripped the furniture itself. Called without one this does
+    both, as it always did.
+    """
+    if clip is None:
+        if s.strip_furniture:
+            strip_furniture(page)
+        clip = _clip_for(page, s)
     pix = page.get_pixmap(dpi=s.dpi, clip=clip, colorspace=fitz.csRGB)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
@@ -1693,10 +1705,15 @@ def clean_pdf(src: str | Path, dst: str | Path | None = None,
 
             page = doc[index]
             here = starts_by_page.get(i, [])
-            crop_top_pt = page.rect.height * s.crop_top
-            rows = [(y - crop_top_pt) * s.dpi / PT_PER_INCH for y, _ in here]
+            # Where the window really lands, not where the fixed fraction says
+            # it does - it moves outwards rather than cut a line in half, and
+            # a question's row has to be measured from the same place.
+            if s.strip_furniture:
+                strip_furniture(page)
+            clip = _clip_for(page, s)
+            rows = [(y - clip.y0) * s.dpi / PT_PER_INCH for y, _ in here]
 
-            image, moved = clean_page(render_page(page, s), s, rows)
+            image, moved = clean_page(render_page(page, s, clip), s, rows)
             if image is not None:
                 cleaned.append(image)
                 page_marks.append(list(zip(moved, (n for _, n in here))))
