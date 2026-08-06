@@ -493,7 +493,16 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     near_bottom = rect.y0 > page_rect.height * 0.935
     if near_bottom:
         return True
-    if near_top and (body.isdigit() or (len(body) <= 5 and body.isupper())):
+    # A page number is printed across the middle of the head of the page. A
+    # bare number over on the right is the Marks column, and the first row of
+    # a mark scheme's table can reach up into this band - so "2" against the
+    # right margin was read as a page number, became the deepest thing in the
+    # header, and the sweep that follows the header down the page took the
+    # whole first row with it. That is how a question lost its part (a).
+    middle = (rect.x0 + rect.x1) / 2
+    centred = abs(middle - page_rect.width / 2) < page_rect.width * 0.15
+    if near_top and centred and (body.isdigit()
+                                 or (len(body) <= 5 and body.isupper())):
         return True                                # page number, "DFD"
     return False
 
@@ -846,6 +855,10 @@ _QUESTION_LABEL = re.compile(r"(\d{1,2})\s*(?:\(.*)?\.?$")
 #: A label opens its line - "2", "2.", "2(a)", "2 (b)(ii)".
 _LABEL_START = re.compile(r"^\d{1,2}\s*(?:[.(]|$)")
 
+#: "1(a)", "2(b)(ii)" - a mark scheme's Question column names the part as
+#: well as the question. A bare number in that column is something else.
+_NAMES_A_PART = re.compile(r"^\d{1,2}\s*\(")
+
 
 def _question_number(text: str) -> int | None:
     """The question a label belongs to, or None if it is not one."""
@@ -1022,10 +1035,11 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     for key in (0, 1):
         # (aligning x, left edge, page, y, number) - the left edge travels
         # along so gap filling can use it later.
-        # (aligning x, left, page, y, number, centre) - both edges travel
-        # along, because the gap filling and the snap back to the first part
-        # each need to know where this column really sits.
-        candidates = [(c[key], c[0], c[2], c[3], c[4], c[1]) for c in raw]
+        # (aligning x, left, page, y, number, centre, text) - both edges
+        # travel along, because the gap filling and the snap back to the first
+        # part each need to know where this column really sits, and the label
+        # itself so a column can be asked whether it names parts.
+        candidates = [(c[key], c[0], c[2], c[3], c[4], c[1], c[5]) for c in raw]
 
         # A mark scheme lists every part in its Question column - 1(a),
         # 1(b)(i), 1(b)(ii)... - so the same number recurs many times. Only
@@ -1079,7 +1093,20 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
             # otherwise split one real column in two, and the poorer half was
             # winning on position.
             numbers = {c[4] for c in column}
-            score = (seed_x <= margin, len({p for p, _, _ in picked}),
+            # A mark scheme names its parts in the Question column - 1(a),
+            # 1(b)(ii), 2(a)(i). A bare run of numbers in a mark scheme is
+            # something else, and usually the marking points listed inside one
+            # answer: "any one from: 1 calibrate colorimeter; 2 use a blank".
+            # Those count 1, 2, 3... exactly as question numbers do, and on a
+            # Planning paper that asks two questions they ran to ten and won
+            # on length. Weighed before the count for that reason, and only
+            # for mark schemes: a question paper's numbers are bare by design.
+            named = True
+            if snap_to_part and column:
+                parts = sum(1 for c in column if _NAMES_A_PART.match(c[6].strip()))
+                named = parts >= len(column) * 0.5
+            score = (seed_x <= margin, named,
+                     len({p for p, _, _ in picked}),
                      min(numbers) == 1, len(picked), len(numbers), -seed_x)
             if score > best_score:
                 best_score, best = score, picked
@@ -1099,7 +1126,7 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
     # empty; measured against the pages actually searched there is no second
     # page for it to reach.
     lively = sum(1 for spans in pages if spans)
-    if best_score[1] < 2 and lively > 2:
+    if best_score[2] < 2 and lively > 2:
         return []
 
     # Now that the column is known, recover any number the strict label match
