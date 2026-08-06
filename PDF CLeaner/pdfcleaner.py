@@ -869,6 +869,41 @@ def find_questions_qp(pages, tolerance: float = 4.0):
     return find_question_starts(pages, tolerance, snap_to_part=False)
 
 
+#: "Question 1 Planning (15 marks)" - a heading, not a table cell.
+_WORDED_HEADING = re.compile(r"^Question\s+(\d{1,2})\b")
+
+
+def _worded_headings(pages) -> list[tuple[int, float, int]]:
+    """
+    Questions announced in words, as the Planning mark schemes do.
+
+    Most mark schemes list their questions in the Question column of a table.
+    Papers 5 do not: they run "Question 1 Planning (15 marks)" as a heading
+    across the top of a page and then set out the marks beneath it, numbered
+    1 to 9 down the very same margin. Read as a table those numbered marking
+    points are the question numbers, so a paper asking two questions came out
+    as nine - all of them on one page.
+
+    Where the headings are there they are the answer, so they are taken
+    before anything else is tried. They must open their lines and count from
+    one without a break, which a passing mention of another question in the
+    guidance never does.
+    """
+    found: dict[int, tuple[int, float]] = {}
+    for index, spans in enumerate(pages):
+        opens = _line_openings(spans)
+        for left, _, y, text in spans:
+            match = _WORDED_HEADING.match(text.strip())
+            if match and _opens_line(opens, left, y):
+                number = int(match.group(1))
+                if number not in found:
+                    found[number] = (index, y)
+    wanted = list(range(1, len(found) + 1))
+    if len(found) < 2 or sorted(found) != wanted:
+        return []
+    return [(found[n][0], found[n][1], n) for n in wanted]
+
+
 def find_questions_ms(pages, tolerance: float = 4.0):
     """
     Where each question begins on a mark scheme.
@@ -880,6 +915,9 @@ def find_questions_ms(pages, tolerance: float = 4.0):
     several parts in. The result is snapped back to the first part carrying
     the number.
     """
+    worded = _worded_headings(pages)
+    if worded:
+        return worded
     return find_question_starts(pages, tolerance, snap_to_part=True)
 
 
@@ -1021,7 +1059,16 @@ def find_question_starts(pages: list[list[tuple[float, float, str]]],
         return []
     # In anything longer than a short extract, questions reach past one page.
     # The count of pages is the second term of the score, behind the margin.
-    if best_score[1] < 2 and len(pages) > 5:
+    #
+    # Counted over the pages that hold something, not the whole document. A
+    # Planning mark scheme is six pages of which four are the front matter and
+    # the marking principles, leaving two of answers - and both its questions
+    # begin on the first of them. Measured against the whole document that
+    # reads as a one-page run and was thrown away, so the mark scheme came out
+    # empty; measured against the pages actually searched there is no second
+    # page for it to reach.
+    lively = sum(1 for spans in pages if spans)
+    if best_score[1] < 2 and lively > 2:
         return []
 
     # Now that the column is known, recover any number the strict label match
@@ -1152,6 +1199,12 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
         return found
 
     recovered = list(found)
+    # The same rule as the strict pass: a label opens its line. This search is
+    # deliberately more willing than that pass, and without the test that
+    # willingness let a raised unit back in - the 3 of "cm3" heading a results
+    # column reads as question 3 sitting just past the end of a Planning
+    # paper, which is exactly the shape this search is looking for.
+    openings = [_line_openings(spans) for spans in pages]
 
     def look(number: int):
         """Where this question's swallowed label is, if it is anywhere."""
@@ -1166,6 +1219,8 @@ def _fill_gaps(pages, column: list[tuple[int, float, int, float]], key: int,
                 if not aligned or not pattern.match(text.strip()):
                     continue
                 if (index, y) <= before or (index, y) >= after:
+                    continue
+                if not _opens_line(openings[index], left, y):
                     continue
                 return (index, y, number)
         return None
