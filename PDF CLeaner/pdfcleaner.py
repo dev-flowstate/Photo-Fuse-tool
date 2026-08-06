@@ -752,7 +752,13 @@ def strip_furniture(page: "fitz.Page",
             for b in page.get_text("blocks")
             if not _is_furniture(b[4], _as_shown(page, fitz.Rect(b[0], b[1], b[2], b[3])), shown)
             and b[4].strip()]
-    content_top = min((r.y0 for r in keep if r.y0 >= head_end), default=shown.height)
+    # A block counts as content if it reaches past the header, not if it
+    # begins past it. An older mark scheme rules its header down to y=74.0 and
+    # opens question 1 at y=73.1 - nine tenths of a point of overlap - so the
+    # question failed the test, the content line fell through to the next
+    # block four hundred points down, and the sweep ran the whole way and took
+    # the top of the question with it.
+    content_top = min((r.y0 for r in keep if r.y1 > head_end), default=shown.height)
     content_bottom = max((r.y1 for r in keep if r.y1 <= foot_start), default=0.0)
 
     # What the rest of the document agrees its header and footer measure, as a
