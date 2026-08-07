@@ -480,7 +480,11 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     # where it came out stuck to the foot of the question before it.
     columns = {"question", "qu", "answer", "answers", "mark", "marks",
                "total", "totals", "guidance", "notes", "part", "additional"}
-    enough = 1 if rect.y1 < page_rect.height * 0.20 else 2
+    # One word is only enough right at the head of the page. A fifth of the
+    # way down is already inside the table, where a lone "Total" is a real
+    # label on a real row - and calling it a heading swept the whole width
+    # down to it and took question 1 with it.
+    enough = 1 if rect.y1 < page_rect.height * 0.12 else 2
     if len(words) >= enough and all(word in columns for word in words):
         return True
 
@@ -1677,6 +1681,18 @@ def split_questions(strip: Image.Image, marks: Sequence[tuple[int, int]],
         if not len(real):
             return start, start
         first, last = start + int(real[0]), start + int(real[-1])
+
+        # Never through the middle of a letter. The test above says where the
+        # question's substance begins, which is not the same as where its ink
+        # begins: a question paper opens on a lone "1" in the margin, and the
+        # first rows of that digit carry too little ink to count as
+        # substance - so the crop landed part way down the number and it came
+        # out with its top sliced off. Having found the line, the edges are
+        # let out again over any ink that touches them.
+        while first > start and ink_per_row[first - 1] > 0:
+            first -= 1
+        while last + 1 < end and ink_per_row[last + 1] > 0:
+            last += 1
 
         above = np.flatnonzero(divider[start:first])
         if len(above):
