@@ -44,6 +44,12 @@ BY_HAND = {
     # Reads two to seven: question 1 sits alone at the head of its page and
     # nothing else in its column reaches up that far.
     "9709_w23_ms_43": 7,
+    # Two questions six points apart in the Question column - 55.6 and 49.6 -
+    # so they never cluster together, and with only two there is no run to
+    # find. Both are the leftmost thing on their line, so a search that knows
+    # what it wants finds them at once.
+    "9702_w16_ms_51": 2,
+    "9702_w16_ms_53": 2,
 }
 
 
