@@ -25,9 +25,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -268,6 +270,17 @@ def audit(path: Path) -> dict:
     return row
 
 
+
+def _worst_edge(job):
+    """The worse of a picture's two edges, for the pool to chew through."""
+    path, kind = job
+    try:
+        edge = edge_ink(Path(path), kind)
+    except Exception:                                     # noqa: BLE001
+        return path, 0.0
+    return path, (max(edge) if edge else 0.0)
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description="List the papers with bad output.")
     p.add_argument("--root", default=str(ROOT))
@@ -320,15 +333,31 @@ def main(argv=None) -> int:
             continue
         images[png.stem.rsplit("_q", 1)[0]].append(png)
 
+    # Every picture has to be decoded for this, and there are fourteen
+    # thousand of them - the one part of the audit that is worth spreading
+    # over the machine. Reading them one at a time held a single core while
+    # the other seven sat idle, which is half an hour of the wall clock.
     print("\nchecking the images for cuts through a line", flush=True)
+    jobs = [(str(png), row.get("kind", ""))
+            for row in rows for png in sorted(images.get(row["name"], ()))]
+    edges: dict[str, float] = {}
+    if jobs:
+        workers = max(1, (os.cpu_count() or 2) - 1)
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for done, (name, worst) in enumerate(
+                    pool.map(_worst_edge, jobs, chunksize=32), 1):
+                edges[name] = worst
+                if done % 2000 == 0:
+                    print(f"  {done}/{len(jobs)} images checked", flush=True)
+
     done = 0
     for row in rows:
         cut = []
         have = sorted(images.get(row["name"], ()))
         for png in have:
-            edge = edge_ink(png, row.get("kind", ""))
-            if edge and max(edge) > 0.5:
-                cut.append([png.name, round(max(edge), 2)])
+            worst = edges.get(str(png), 0.0)
+            if worst > 0.5:
+                cut.append([png.name, round(worst, 2)])
             done += 1
         if cut:
             row["faults"] = sorted(set(row["faults"]) | {"clipped"})
