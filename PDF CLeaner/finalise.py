@@ -54,10 +54,22 @@ def main(argv=None) -> int:
 
     # By name, not by path. A run stopped part way can leave one image in
     # two places, and counting it twice put duplicate lines in the manifest.
+    #
+    # Only the working folders are walked. The web copies are the same
+    # pictures at a fraction of the size and the handover folders are copies
+    # set aside for the database - all under the same names. Walking the whole
+    # tree picked those up as if they were the originals and filed them
+    # alongside, so twenty-eight pictures at 160 to 220 dpi ended up in the
+    # review folders where everything else is 400.
+    aside = ("already done", "already done replacements",
+             "done highquality 400dpi")
     found: dict[str, dict[str, Path]] = defaultdict(dict)
     for png in out.rglob("*.png"):
-        if "_q" in png.stem:
-            found[png.stem.rsplit("_q", 1)[0]].setdefault(png.name, png)
+        if "_q" not in png.stem or png.parent.name.endswith("_web"):
+            continue
+        if any(part in aside for part in png.relative_to(out).parts[:-1]):
+            continue
+        found[png.stem.rsplit("_q", 1)[0]].setdefault(png.name, png)
     images: dict[str, list[Path]] = {
         stem: sorted(by_name.values()) for stem, by_name in found.items()}
 
@@ -84,6 +96,14 @@ def main(argv=None) -> int:
     #: for, so they still count however well a pair lines up.
     ABOUT_THE_IMAGES = {"clipped", "furniture"}
 
+    #: Papers whose mark scheme, as Cambridge published it, does not cover
+    #: every question the paper asks. Both were read page by page to be sure
+    #: it is the source and not the reading: 9701_s24_ms_22 is thirteen pages
+    #: holding questions 1 to 4 where the paper asks five, and 9709_s24_ms_33
+    #: is nineteen pages holding 1 to 10 where the paper asks eleven. The
+    #: questions are kept; the last one simply has no mark scheme to link to.
+    SHORT_MARK_SCHEME = {"9701_s24_ms_22": 4, "9709_s24_ms_33": 10}
+
     def corroborated(name: str) -> bool:
         """
         Whether this paper's pictures and its partner's tell the same story.
@@ -97,7 +117,20 @@ def main(argv=None) -> int:
         mate = partner(name)
         if not mine or not mate:
             return False
-        return mine == numbers(mate) and mine == list(range(1, len(mine) + 1))
+        theirs = numbers(mate)
+        if mine != list(range(1, len(mine) + 1)):
+            return False
+        if mine == theirs:
+            return True
+        # A mark scheme that is short in the source is allowed to be short
+        # here. The question paper keeps all its questions; the ones past the
+        # end of the mark scheme simply have nothing to link to.
+        short = SHORT_MARK_SCHEME.get(name if "_ms_" in name else mate)
+        if short is None:
+            return False
+        longer, shorter = (mine, theirs) if len(mine) > len(theirs) else (theirs, mine)
+        return (shorter == list(range(1, short + 1))
+                and longer[:short] == shorter)
 
     sound = {row["name"] for row in rows
              if images.get(row["name"])
