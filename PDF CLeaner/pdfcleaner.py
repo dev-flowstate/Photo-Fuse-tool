@@ -475,8 +475,11 @@ def _is_furniture(text: str, rect: "fitz.Rect", page_rect: "fitz.Rect") -> bool:
     # and none of them then reached two words. The heading's ruled box was
     # left behind as an empty row at the top of a question.
     words = body.lower().replace("/", " ").split()
-    columns = {"question", "answer", "answers", "mark", "marks", "total",
-               "totals", "guidance", "notes", "part", "additional"}
+    # "Qu" is how the older mark schemes abbreviate it - "Qu Answer Marks
+    # Guidance" - and without it that heading survived onto the page below,
+    # where it came out stuck to the foot of the question before it.
+    columns = {"question", "qu", "answer", "answers", "mark", "marks",
+               "total", "totals", "guidance", "notes", "part", "additional"}
     enough = 1 if rect.y1 < page_rect.height * 0.20 else 2
     if len(words) >= enough and all(word in columns for word in words):
         return True
@@ -795,12 +798,20 @@ def strip_furniture(page: "fitz.Page",
             # and reaching for the clearance took the question's first line
             # with it - redaction deletes any text the rectangle touches.
             bottom = max(rect.y1, min(content_top - clearance, band))
+            # Never pulled above the furniture's own foot. A chemistry mark
+            # scheme sets "NaCl + H2O + CO2" as one tall block running from
+            # 42 to 142, straddling the header band, so the content line came
+            # out at 42 - above the column heading at 56 - and clamping to it
+            # left the heading uncovered. The whole point of the rectangle is
+            # to cover that heading, so it may be shortened towards the
+            # content but never past the thing it exists to remove.
             rect = fitz.Rect(shown.x0, shown.y0, shown.x1,
-                             min(bottom, content_top))
+                             min(bottom, max(content_top, rect.y1)))
         elif rect.y0 > shown.height - band:
             top = min(rect.y0, max(content_bottom + clearance,
                                    shown.height - band))
-            rect = fitz.Rect(shown.x0, max(top, content_bottom),
+            # The same at the foot: never pushed below the furniture's head.
+            rect = fitz.Rect(shown.x0, max(top, min(content_bottom, rect.y0)),
                              shown.x1, shown.y1)
         elif rect.height < 40 and rect.width > shown.width * 0.5:
             # A column heading reprinted halfway down the page, where the
@@ -1624,7 +1635,32 @@ def split_questions(strip: Image.Image, marks: Sequence[tuple[int, int]],
 
     # Rows carrying something a reader would miss: not white paper, not the
     # table's own borders, not a ruled line.
-    content = ~seam & ~divider
+    #
+    # The borders have to be discounted by where they are, not by how much
+    # ink they add up to. A mark scheme's empty row carries only the vertical
+    # borders crossing it - seventeen pixels on one paper, against a blank
+    # threshold of fourteen - so it read as content and the question was
+    # cropped to the rule below it, taking an empty ruled row with it. The
+    # borders run the height of the table, so they are the columns that are
+    # inked nearly all the way down; ignoring those columns leaves the row
+    # carrying nothing, which is what it is.
+    down = ink.mean(axis=0) > 0.5
+    if down.any():
+        # A point or two either side as well. A border is a hard core two or
+        # three pixels wide with the antialiasing of the render feathered
+        # against it, and only the core is inked the whole way down - so
+        # taking the core alone left eleven pixels of fringe, which was
+        # enough to call an empty row content all over again.
+        down = np.convolve(down.astype(np.int16),
+                           np.ones(7, dtype=np.int16), mode="same") > 0
+    bare = ink.copy()
+    if down.any():
+        bare[:, down] = False
+    # What is left has to beat the paper's own baseline, not merely exceed
+    # nothing: taking the borders out of an empty row leaves eight stray
+    # pixels of the antialiasing around them, and eight was enough to call
+    # the row content.
+    content = (bare.sum(axis=1) > max(4, floor)) & ~divider
 
     def close_in(start: int, end: int) -> tuple[int, int]:
         """
