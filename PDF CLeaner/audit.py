@@ -317,6 +317,16 @@ def audit(path: Path) -> dict:
 
 
 
+
+def _audit_one(path_text):
+    """Audit one paper, for the pool."""
+    try:
+        return audit(Path(path_text))
+    except Exception as exc:                              # noqa: BLE001
+        return {"name": Path(path_text).stem, "faults": ["error"],
+                "detail": {"error": f"{type(exc).__name__}: {exc}"[:200]}}
+
+
 def _worst_edge(job):
     """The worse of a picture's two edges, for the pool to chew through."""
     path, kind = job
@@ -344,10 +354,15 @@ def main(argv=None) -> int:
                for p in out.rglob("*.png") if "_q" in p.stem}
 
     print(f"auditing {len(pdfs)} papers", flush=True)
+    # Reading two thousand PDFs one at a time held a single core while the
+    # rest of the machine idled. Each paper is read on its own and shares
+    # nothing with the next, so they go through a pool.
     rows, started = [], time.time()
-    for done, path in enumerate(pdfs, 1):
-        row = audit(path)
-        if path.stem not in written:
+    workers = max(1, (os.cpu_count() or 2) - 1)
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+      for done, row in enumerate(pool.map(_audit_one, [str(q) for q in pdfs],
+                                          chunksize=4), 1):
+        if row["name"] not in written:
             row["faults"] = sorted(set(row["faults"]) | {"no-output"})
         rows.append(row)
         if done % 100 == 0:
