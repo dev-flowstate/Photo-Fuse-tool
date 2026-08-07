@@ -859,6 +859,9 @@ def body_spans(page: "fitz.Page") -> list[tuple[float, float, float, str]]:
 _QUESTION_LABEL = re.compile(r"(\d{1,2})\s*(?:\(.*)?\.?$")
 
 #: A label opens its line - "2", "2.", "2(a)", "2 (b)(ii)".
+#: A "Q" in front of the number, or a stray full stop typed before it.
+_ODD_LABEL = re.compile(r"^(?:[Qq]|[.,])\s*(?=\d)")
+
 _LABEL_START = re.compile(r"^\d{1,2}\s*(?:[.(]|$)")
 
 #: "1(a)", "2(b)(ii)" - a mark scheme's Question column names the part as
@@ -869,6 +872,12 @@ _NAMES_A_PART = re.compile(r"^\d{1,2}\s*\(")
 def _question_number(text: str) -> int | None:
     """The question a label belongs to, or None if it is not one."""
     body = text.strip()
+    # Cambridge is not always consistent about how it writes a label. One
+    # mark scheme heads its questions "Q6(i)" and "Q6(ii)"; another typed
+    # ".4" with a stray full stop in front of the number. Both are plainly
+    # the question number to a reader, and neither begins with a digit, so
+    # both were invisible and the question was lost.
+    body = _ODD_LABEL.sub("", body, count=1)
     if not body or not body[0].isdigit():
         return None
     match = _QUESTION_LABEL.fullmatch(body)
