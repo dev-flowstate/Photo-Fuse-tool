@@ -759,7 +759,14 @@ def strip_furniture(page: "fitz.Page",
     # block four hundred points down, and the sweep ran the whole way and took
     # the top of the question with it.
     content_top = min((r.y0 for r in keep if r.y1 > head_end), default=shown.height)
-    content_bottom = max((r.y1 for r in keep if r.y1 <= foot_start), default=0.0)
+    # The same at the foot, and for the same reason. A block counts as
+    # content if it begins above the footer, not if it ends above it: a
+    # question paper prints "[Total: 11]" right down at the bottom, and on
+    # 9700_w18_qp_21 that block runs from 780.6 to 798.2 while the footer
+    # starts at 792.3. Asking it to end above the footer left it out of the
+    # measurement, so the sweep was free to start at 790 and take it away -
+    # and the question came out not saying what it was worth.
+    content_bottom = max((r.y1 for r in keep if r.y0 < foot_start), default=0.0)
 
     # What the rest of the document agrees its header and footer measure, as a
     # floor rather than a fallback: a page that recognises its banner but not
