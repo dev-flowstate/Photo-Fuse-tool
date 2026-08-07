@@ -66,12 +66,44 @@ def main(argv=None) -> int:
     seen: set[str] = set()
     rows = [r for r in rows if not (r["name"] in seen or seen.add(r["name"]))]
 
-    # A question links to its mark scheme on the site, so one without the
-    # other is a link that points at nothing. A paper is only clean if its
-    # partner is clean too.
+    # What each paper's pictures actually contain, which is not always what
+    # reading the PDF again makes of it. Some papers are cut to a question
+    # list taken from their partner or given by hand, precisely because
+    # reading them does not work - so the audit, which reads afresh, reports
+    # the wrong answer those repairs exist to override. Judging on the
+    # reading held 38 pairs of perfectly good pictures out of the set.
+    def numbers(name: str) -> list[int]:
+        out = []
+        for png in images.get(name, ()):
+            tail = png.stem.rsplit("_q", 1)[-1]
+            if tail.isdigit():
+                out.append(int(tail))
+        return sorted(out)
+
+    #: Faults about the pictures themselves. These the pictures cannot answer
+    #: for, so they still count however well a pair lines up.
+    ABOUT_THE_IMAGES = {"clipped", "furniture"}
+
+    def corroborated(name: str) -> bool:
+        """
+        Whether this paper's pictures and its partner's tell the same story.
+
+        The two documents are read independently, so a paper and its mark
+        scheme holding the same question numbers, running from one with
+        nothing skipped, is two separate readings agreeing. That is better
+        evidence than either reading on its own.
+        """
+        mine = numbers(name)
+        mate = partner(name)
+        if not mine or not mate:
+            return False
+        return mine == numbers(mate) and mine == list(range(1, len(mine) + 1))
+
     sound = {row["name"] for row in rows
-             if not (set(row.get("faults", ())) - HARMLESS)
-             and images.get(row["name"])}
+             if images.get(row["name"])
+             and not (set(row.get("faults", ())) & ABOUT_THE_IMAGES)
+             and (corroborated(row["name"])
+                  or not (set(row.get("faults", ())) - HARMLESS))}
 
     clean, dirty = [], []
     reasons: Counter = Counter()
@@ -81,9 +113,9 @@ def main(argv=None) -> int:
         if not held:
             continue
         mate = partner(row["name"])
-        if faults:
+        if row["name"] not in sound:
             dirty.append((row, held))
-            reasons.update(faults)
+            reasons.update(faults or {"pictures do not pair"})
         elif mate and mate not in sound:
             dirty.append((row, held))
             reasons["no usable partner"] += 1

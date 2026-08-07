@@ -1368,6 +1368,7 @@ def _clip_for(page: "fitz.Page", s: CleanSettings) -> "fitz.Rect":
         rect.y0 + rect.height * s.crop_bottom,
     )
     top, bottom = clip.y0, clip.y1
+    left, right = clip.x0, clip.x1
     for block in page.get_text("blocks"):
         if not block[4].strip():
             continue
@@ -1376,8 +1377,19 @@ def _clip_for(page: "fitz.Page", s: CleanSettings) -> "fitz.Rect":
             top = min(top, box.y0 - 1.0)
         if box.y0 < clip.y1 < box.y1:
             bottom = max(bottom, box.y1 + 1.0)
+        # And the same at the sides. The margin is a share of the width, so
+        # on a landscape mark scheme - 842 points across - six percent is
+        # fifty points, and a Question column that starts at thirty-four is
+        # cut clean off. 9709_w23_ms_51 came out showing only the ")" of
+        # "5(a)", with the number and the part letter outside the window.
+        if box.x0 < clip.x0 < box.x1:
+            left = min(left, box.x0 - 1.0)
+        if box.x0 < clip.x1 < box.x1:
+            right = max(right, box.x1 + 1.0)
     clip.y0 = max(rect.y0, top)
     clip.y1 = min(rect.y1, bottom)
+    clip.x0 = max(rect.x0, left)
+    clip.x1 = min(rect.x1, right)
     return clip
 
 
