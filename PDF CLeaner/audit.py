@@ -105,11 +105,26 @@ def edge_ink(png: Path, kind: str = "") -> tuple[float, float] | None:
             mask = np.asarray(handle.convert("L")) < 200
     except Exception:                                 # noqa: BLE001 - skipped
         return None
+    # The table's own vertical borders run the whole height of a mark scheme,
+    # so they put ink and a separate piece into every row - including the
+    # first and last. That made a clean opening line read as a cut one:
+    # "1 | EITHER: | (B1, B1, B1) | OE" measured 1.92 of a line and 21 pieces
+    # on a picture whose top is plainly whole. The borders are taken out
+    # before anything is measured; they are furniture, not part of the text.
+    if mask.shape[0] > 20:
+        borders = mask.mean(axis=0) > 0.5
+        if borders.any():
+            mask = mask.copy()
+            mask[:, borders] = False
     rows = mask.sum(axis=1)
     inked = np.flatnonzero(rows)
     if not len(inked):
         return None
-    line = np.percentile(rows[inked], 90)             # a whole line of text
+    # A whole line of text, taken from the densest rows there are. The 90th
+    # percentile was measured over every inked row, and a question paper is
+    # mostly dotted answer rulings, so it came out at a fraction of a real
+    # line and ordinary text measured above it.
+    line = np.percentile(rows[inked], 98)
     if line <= 0:
         return None
 
@@ -118,6 +133,30 @@ def edge_ink(png: Path, kind: str = "") -> tuple[float, float] | None:
         edges = np.flatnonzero(np.diff(
             np.concatenate(([0], mask[y].view(np.int8), [0]))))
         return len(edges) // 2
+
+    def like_its_neighbours(y: int, inward: int) -> bool:
+        """
+        Whether this row looks like the rows just inside it.
+
+        At a clean edge the picture opens on the tops of the tallest letters
+        and the ink climbs steeply as the line fills out - the first row
+        carries a fraction of what sits a few rows in. A line cut through the
+        middle opens on the cross-section of every letter it crossed, so the
+        edge row already carries what its neighbours carry.
+
+        This is what tells the two apart. Measuring the edge against a "whole
+        line" does not: the reference is taken over every inked row, and a
+        question paper is mostly dotted answer rulings, so the reference
+        comes out low and an ordinary opening line measures above it. That
+        is why twenty-one pictures were called cut when every one of them
+        opens on its question number and closes on its total.
+        """
+        near = [rows[y + inward * step] for step in range(3, 16)
+                if 0 <= y + inward * step < len(rows)]
+        near = [n for n in near if n > 0]
+        if not near:
+            return False
+        return rows[y] > float(np.percentile(near, 75)) * 0.6
 
     def measure(y: int) -> float:
         # Two things have to be true at once, and neither says it alone.
@@ -131,7 +170,14 @@ def edge_ink(png: Path, kind: str = "") -> tuple[float, float] | None:
         #
         # Measuring the ink alone called a clean mark scheme 6.82; counting
         # the pieces alone called a clean question paper 24.
-        if runs(y) < 10:
+        # Between a dozen and a hundred or so pieces is what letter strokes
+        # look like. Hundreds of them is a dotted ruling - the answer space a
+        # question ends on - which is where the question is meant to stop.
+        pieces = runs(y)
+        if pieces < 10 or pieces > 150:
+            return 0.0
+        inward = 1 if y == inked[0] else -1
+        if not like_its_neighbours(y, inward):
             return 0.0
         ratio = float(rows[y] / line)
         return ratio if ratio >= 0.8 else 0.0

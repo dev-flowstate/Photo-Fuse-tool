@@ -50,6 +50,9 @@ BY_HAND = {
     # what it wants finds them at once.
     "9702_w16_ms_51": 2,
     "9702_w16_ms_53": 2,
+    # Reads two marking points fifteen points apart on one page as if they
+    # were the paper. Its question paper reads 1 to 10.
+    "9709_s18_ms_33": 10,
 }
 
 
@@ -65,8 +68,23 @@ def cut(name: str, wanted: int, out: Path, root: Path, dpi: int) -> dict:
               else pc.find_questions_qp(searchable))
     row["before"] = [n for _, _, n in before]
 
-    band = repair.column_of(searchable, before)
-    found = repair.hunt(searchable, row["wanted"], band)
+    # Where to look. The obvious band comes from the labels already found -
+    # but this paper is here because those are wrong, and a band drawn round
+    # them can be wrong with them: 9709_s18_ms_33 read two marking points at
+    # left 163 as its questions, so the search went hunting at 152 to 184
+    # while the Question column sat at 59 to 68.
+    #
+    # So the left edge of the page is tried as well. A question label is the
+    # leftmost thing on its line, and on a mark scheme the Question column is
+    # the leftmost column of the table, so the edge is where it must be.
+    edge = min((left for spans in searchable for left, _, _, _ in spans),
+               default=0.0)
+    bands = [repair.column_of(searchable, before), (edge - 4.0, edge + 40.0)]
+    found = []
+    for band in bands:
+        found = repair.hunt(searchable, row["wanted"], band)
+        if [n for _, _, n in found] == row["wanted"]:
+            break
 
     # Where a label cannot be found at all, look at the page before the
     # furniture came off it. An older mark scheme rules its header as a table
