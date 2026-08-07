@@ -149,6 +149,7 @@ class App(ttk.Frame):
             "paper": tk.StringVar(value="1"),
             "variant": tk.StringVar(value=""),
             "chapter": tk.StringVar(value=""),
+            "subtopic": tk.StringVar(value=""),
             "year": tk.StringVar(value=""),
             "season": tk.StringVar(value="on"),
             "question": tk.StringVar(value=""),
@@ -186,18 +187,24 @@ class App(ttk.Frame):
         ttk.Label(box, text="For the spreadsheet (not in the file name)",
                   foreground="#666").grid(row=6, column=0, columnspan=4, sticky="w")
 
-        row(7, "Difficulty", ttk.Combobox(box, textvariable=self.v["difficulty"],
+        row(7, "Sub-chapter", ttk.Entry(box, textvariable=self.v["subtopic"]))
+        ttk.Label(box, text="Optional. More than one? Separate them with commas "
+                            "- Diffraction, Interference - and each becomes its own tag.",
+                  foreground="#666", font=("Segoe UI", 8)
+                  ).grid(row=8, column=0, columnspan=4, sticky="w", pady=(0, 4))
+
+        row(9, "Difficulty", ttk.Combobox(box, textvariable=self.v["difficulty"],
                                           values=["", "Easy", "Medium", "Hard"],
                                           state="readonly", width=12))
-        row(7, "Marks", ttk.Entry(box, textvariable=self.v["marks"], width=12), col=2)
-        row(8, "YouTube URL", ttk.Entry(box, textvariable=self.v["youtube_url"]))
+        row(9, "Marks", ttk.Entry(box, textvariable=self.v["marks"], width=12), col=2)
+        row(10, "YouTube URL", ttk.Entry(box, textvariable=self.v["youtube_url"]))
 
         ttk.Separator(box, orient="horizontal").grid(
-            row=9, column=0, columnspan=4, sticky="ew", pady=8)
-        ttk.Label(box, text="Will be saved as:").grid(row=10, column=0, columnspan=4, sticky="w")
+            row=11, column=0, columnspan=4, sticky="ew", pady=8)
+        ttk.Label(box, text="Will be saved as:").grid(row=12, column=0, columnspan=4, sticky="w")
         self.name_label = ttk.Label(box, text="", font=("Consolas", 10, "bold"),
                                     foreground="#1a7f37", wraplength=640, justify="left")
-        self.name_label.grid(row=11, column=0, columnspan=4, sticky="w", pady=(2, 0))
+        self.name_label.grid(row=13, column=0, columnspan=4, sticky="w", pady=(2, 0))
 
     def _build_options_panel(self):
         box = ttk.LabelFrame(self, text="3. Fusing options (defaults are fine)", padding=8)

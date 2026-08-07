@@ -63,7 +63,7 @@ DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "output"
 #: Optional helper file that mirrors columns A-I of the spreadsheet.
 ROWS_CSV_NAME = "_spreadsheet_rows.csv"
 CSV_COLUMNS = [
-    "subject", "paper", "chapter", "year", "difficulty",
+    "subject", "paper", "chapter", "subtopic", "year", "difficulty",
     "marks", "q_filename", "ms_filename", "youtube_url",
 ]
 
@@ -95,6 +95,32 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")
 
 
+def tidy_subtopics(text: str) -> str:
+    """
+    Tidy a list of sub-chapters into the form the sheet wants.
+
+    The brief allows a chapter to carry more than one sub-chapter, written as
+    one comma separated list - "Diffraction, Interference" - and each becomes
+    its own tag on the question's heading. So the separator matters: spacing
+    is normalised to ", ", empties from a trailing or doubled comma are
+    dropped, and a repeat is only kept once.
+
+    Unlike the chapter in the file name this is not slugified. It is read by
+    students, so it keeps its spaces and its capitals.
+    """
+    seen: list[str] = []
+    for part in str(text).split(","):
+        part = " ".join(part.split())
+        if part and part.lower() not in [s.lower() for s in seen]:
+            seen.append(part)
+    return ", ".join(seen)
+
+
+def subtopic_list(text: str) -> list[str]:
+    """The sub-chapters as separate tags, the way the site shows them."""
+    return [p for p in (x.strip() for x in tidy_subtopics(text).split(",")) if p]
+
+
 @dataclass
 class Meta:
     """Everything needed to name the file (and, optionally, log a sheet row)."""
@@ -108,6 +134,7 @@ class Meta:
     question: str = ""         # 4, or 4a
     kind: str = "Q"            # Q or MS
     # Spreadsheet-only extras (never appear in the file name):
+    subtopic: str = ""         # sub-chapter(s), comma separated
     difficulty: str = ""
     marks: str = ""
     youtube_url: str = ""
@@ -638,6 +665,7 @@ def log_spreadsheet_row(out_dir: Path, meta: Meta, filename: str) -> Path:
         "subject": slugify(meta.subject),
         "paper": str(meta.paper).strip(),
         "chapter": str(meta.chapter).strip(),
+        "subtopic": tidy_subtopics(meta.subtopic),
         "year": str(meta.year).strip(),
         "difficulty": str(meta.difficulty).strip(),
         "marks": str(meta.marks).strip(),
@@ -689,6 +717,9 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     g.add_argument("--paper", required=True, help="paper number, e.g. 1")
     g.add_argument("--variant", default="", help="optional variant, e.g. 2 -> p12")
     g.add_argument("--chapter", required=True, help="e.g. Quadratics")
+    g.add_argument("--subtopic", default="",
+                   help="sub-chapter(s) for the sheet; separate several with "
+                        "commas, e.g. 'Diffraction, Interference'")
     g.add_argument("--year", required=True, help="e.g. 2022")
     g.add_argument("--season", required=True, choices=list(SEASONS))
     g.add_argument("--q", dest="question", required=True, help="question number, e.g. 4")
@@ -739,6 +770,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     )
     meta = Meta(
         subject=a.subject, paper=a.paper, variant=a.variant, chapter=a.chapter,
+        subtopic=a.subtopic,
         year=a.year, season=a.season, question=a.question, kind=a.kind,
         difficulty=a.difficulty, marks=a.marks, youtube_url=a.youtube_url,
     )

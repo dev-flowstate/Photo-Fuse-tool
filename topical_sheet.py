@@ -39,8 +39,8 @@ except ImportError:  # pragma: no cover - startup guard for contributors
     ) from None
 
 #: Columns A-I of the Questions tab - the ones a contributor fills in.
-FIELDS = ("subject", "paper", "chapter", "year", "difficulty", "marks",
-          "q_filename", "ms_filename", "youtube_url")
+FIELDS = ("subject", "paper", "chapter", "subtopic", "year", "difficulty",
+          "marks", "q_filename", "ms_filename", "youtube_url")
 
 #: Spellings that have been seen for each heading, so a slightly different
 #: template still lines up.
@@ -48,6 +48,8 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "subject": ("subject",),
     "paper": ("paper", "paperno", "papernumber"),
     "chapter": ("chapter", "topic", "chaptername"),
+    "subtopic": ("subtopic", "subtopics", "subchapter", "subchapters",
+                 "subtopicname", "section"),
     "year": ("year", "examyear"),
     "difficulty": ("difficulty", "level"),
     "marks": ("marks", "totalmarks", "mark"),
@@ -222,11 +224,16 @@ def values_for(meta, filename: str = "") -> dict[str, object]:
     mark scheme in separately - and plenty to lose, since that is exactly
     where a typo would break the link between sheet and image.
     """
-    from photofuse import slugify
+    from photofuse import slugify, tidy_subtopics
 
     values: dict[str, object] = {
         "subject": slugify(meta.subject),
-        "chapter": slugify(meta.chapter),
+        # Written the way a student reads it, not slugified. The brief is
+        # explicit that the squashed spelling belongs in the file name while
+        # the sheet's chapter column keeps its spaces and capitals - that
+        # column is what the site filters by and shows.
+        "chapter": " ".join(str(meta.chapter).split()),
+        "subtopic": tidy_subtopics(getattr(meta, "subtopic", "")),
         "difficulty": str(meta.difficulty).strip(),
         "youtube_url": str(meta.youtube_url).strip(),
         "q_filename": meta.filename("Q"),
