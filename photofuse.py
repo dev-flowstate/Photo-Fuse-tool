@@ -166,8 +166,10 @@ class Meta:
         issues = []
         if slugify(self.subject) not in SUBJECTS:
             issues.append(f"subject must be one of {', '.join(SUBJECTS)}")
-        if not re.fullmatch(r"[1-6]", str(self.paper).strip()):
-            issues.append("paper must be a single digit 1-6")
+        # Seven, not six. Maths runs to Paper 7 - 9709 sets 71, 72, 73 for
+        # Probability & Statistics 2 - and the tool refused them.
+        if not re.fullmatch(r"[1-7]", str(self.paper).strip()):
+            issues.append("paper must be a single digit 1-7")
         # The brief's PV token is paper + variant, so the variant is not
         # optional: physics_p11_... means paper 1 variant 1.
         if not re.fullmatch(r"\d", str(self.variant).strip()):

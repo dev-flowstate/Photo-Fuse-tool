@@ -316,7 +316,41 @@ def working_copy(template: str | Path, out_dir: str | Path) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     destination = out_dir / template.name
     if destination.resolve() == template.resolve():
+        allow_paper_seven(destination)
         return template                           # already working in the copy
     if not destination.exists():
         shutil.copy2(template, destination)
+        allow_paper_seven(destination)
     return destination
+
+
+def allow_paper_seven(book: str | Path) -> bool:
+    """
+    Let the paper column hold a 7.
+
+    The template's dropdown offers 1 to 6, which is right for the sciences but
+    not for maths: 9709 sets a Paper 7 - 71, 72, 73 for Probability &
+    Statistics 2 - and Excel would mark every one of those rows as invalid.
+    Widened on the working copy only, so the template you were given is left
+    exactly as it is.
+
+    Returns whether anything needed changing.
+    """
+    path = Path(book)
+    try:
+        workbook = load_workbook(path)
+    except (OSError, ValueError):
+        return False
+    changed = False
+    for sheet in workbook.worksheets:
+        for rule in getattr(sheet.data_validations, "dataValidation", []):
+            formula = str(getattr(rule, "formula1", "") or "")
+            if "1,2,3,4,5,6" in formula and "7" not in formula:
+                rule.formula1 = formula.replace("1,2,3,4,5,6", "1,2,3,4,5,6,7")
+                changed = True
+    if changed:
+        try:
+            workbook.save(path)
+        except (OSError, PermissionError):
+            return False
+    return changed

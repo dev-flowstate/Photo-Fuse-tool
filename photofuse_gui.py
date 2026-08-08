@@ -169,7 +169,9 @@ class App(ttk.Frame):
                                        values=list(pf.SUBJECTS), state="readonly", width=12))
         row(0, "Type", ttk.Combobox(box, textvariable=self.v["kind"],
                                     values=list(pf.KINDS), state="readonly", width=12), col=2)
-        row(1, "Paper", ttk.Entry(box, textvariable=self.v["paper"], width=12))
+        row(1, "Paper", ttk.Combobox(box, textvariable=self.v["paper"],
+                                     values=[str(n) for n in range(1, 8)],
+                                     state="readonly", width=12))
         row(1, "Variant", ttk.Entry(box, textvariable=self.v["variant"], width=12), col=2)
         row(2, "Chapter", ttk.Entry(box, textvariable=self.v["chapter"]))
         row(2, "Question no.", ttk.Entry(box, textvariable=self.v["question"], width=12), col=2)
